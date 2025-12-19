@@ -482,18 +482,23 @@ pub(crate) fn queries_and_evals<Challenge: Clone>(
     proof: &AirProof<Challenge>,
     zs: &[Vec<Challenge>],
 ) -> Vec<Vec<(MlQuery<Challenge>, Vec<Challenge>)>> {
+    // We commit to *two* matrices per AIR:
+    // - matrix 2*i contains the "local" evaluations
+    // - matrix 2*i+1 contains the "next-row" evaluations (cyclic row shift by 1)
+    //
+    // This avoids requiring PCS backends to support `MlQuery::EqRotateRight`.
     izip!(metas, &proof.univariate_skips, zs)
         .enumerate()
-        .map(|(idx, (meta, univariate_skip, z))| {
+        .flat_map(|(idx, (meta, univariate_skip, z))| {
             let evals = if univariate_skip.skip_rounds > 0 {
                 &proof.univariate_eval_check.evals[idx]
             } else {
                 &proof.regular.evals[idx]
             };
             let (local, next) = evals.split_at(meta.width);
-            vec![
-                (MlQuery::Eq(z.to_vec()), local.to_vec()),
-                (MlQuery::EqRotateRight(z.to_vec(), 1), next.to_vec()),
+            [
+                vec![(MlQuery::Eq(z.to_vec()), local.to_vec())],
+                vec![(MlQuery::Eq(z.to_vec()), next.to_vec())],
             ]
         })
         .collect()

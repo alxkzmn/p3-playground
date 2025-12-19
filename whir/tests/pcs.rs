@@ -1,7 +1,7 @@
 use core::iter::repeat_with;
 
 use itertools::{Itertools, izip};
-use p3_challenger::{CanObserve, FieldChallenger};
+use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{ExtensionField, Field};
@@ -25,7 +25,10 @@ fn do_test_whir_pcs<Val, Challenge, Challenger, P>(
     Val: Field,
     StandardUniform: Distribution<Val>,
     Challenge: ExtensionField<Val>,
-    Challenger: Clone + CanObserve<P::Commitment> + FieldChallenger<Val>,
+    Challenger: Clone
+        + CanObserve<P::Commitment>
+        + FieldChallenger<Val>
+        + GrindingChallenger<Witness = Val>,
 {
     let num_rounds = log_bs_by_round.len();
     let mut rng = seeded_rng();
@@ -205,21 +208,23 @@ macro_rules! make_tests_for_pcs {
 }
 
 mod koala_bear_whir_pcs {
-    use p3_challenger::{HashChallenger, SerializingChallenger32};
-    use p3_keccak::Keccak256Hash;
-    use p3_symmetric::{CompressionFunctionFromHasher, SerializingHasher};
+    use p3_challenger::DuplexChallenger;
+    use p3_koala_bear::Poseidon2KoalaBear;
+    use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
     use p3_whir::{FoldingFactor, ProtocolParameters, SecurityAssumption, WhirPcs};
+    use whir_p3::whir::parameters::InitialPhaseConfig;
 
     use super::*;
 
     type Val = KoalaBear;
     type Challenge = BinomialExtensionField<Val, 4>;
-    type ByteHash = Keccak256Hash;
-    type FieldHash = SerializingHasher<ByteHash>;
-    type Compress = CompressionFunctionFromHasher<ByteHash, 2, 32>;
+    type Perm = Poseidon2KoalaBear<16>;
+    const DIGEST_ELEMS: usize = 8;
+    type FieldHash = PaddingFreeSponge<Perm, 16, 8, DIGEST_ELEMS>;
+    type Compress = TruncatedPermutation<Perm, 2, DIGEST_ELEMS, 16>;
     type Dft = Radix2DitParallel<Val>;
-    type Challenger = SerializingChallenger32<Val, HashChallenger<u8, ByteHash, 32>>;
-    type MyPcs = WhirPcs<Val, Dft, FieldHash, Compress, 32>;
+    type Challenger = DuplexChallenger<Val, Perm, 16, 8>;
+    type MyPcs = WhirPcs<Val, Dft, FieldHash, Compress, DIGEST_ELEMS>;
 
     fn get_pcs(
         log_blowup: usize,
@@ -229,13 +234,15 @@ mod koala_bear_whir_pcs {
         let dft = Dft::default();
         let security_level = 100;
         let pow_bits = 20;
-        let byte_hash = ByteHash {};
-        let field_hash = FieldHash::new(byte_hash);
-        let compress = Compress::new(byte_hash);
+        let mut rng = seeded_rng();
+        let perm = Perm::new_from_rng_128(&mut rng);
+        let field_hash = FieldHash::new(perm.clone());
+        let compress = Compress::new(perm.clone());
         let whir_params = ProtocolParameters {
-            initial_statement: true,
+            initial_phase_config: InitialPhaseConfig::WithStatementClassic,
             security_level,
             pow_bits,
+            rs_domain_initial_reduction_factor: 3,
             folding_factor: FoldingFactor::ConstantFromSecondRound(
                 first_round_folding_factor,
                 folding_factor,
@@ -244,12 +251,8 @@ mod koala_bear_whir_pcs {
             merkle_compress: compress,
             soundness_type: SecurityAssumption::CapacityBound,
             starting_log_inv_rate: log_blowup,
-            rs_domain_initial_reduction_factor: 3,
         };
-        (
-            MyPcs::new(dft, whir_params),
-            Challenger::from_hasher(Vec::new(), byte_hash),
-        )
+        (MyPcs::new(dft, whir_params), Challenger::new(perm))
     }
 
     mod blowup_1 {

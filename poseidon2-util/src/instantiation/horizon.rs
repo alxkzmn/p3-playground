@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use core::iter::zip;
 use core::marker::PhantomData;
 
-use p3_field::{Algebra, Field, InjectiveMonomial};
+use p3_field::{Algebra, Field, InjectiveMonomial, PrimeCharacteristicRing, PrimeField64};
 use p3_poseidon2::{
     ExternalLayer, ExternalLayerConstants, ExternalLayerConstructor, GenericPoseidon2LinearLayers,
     HLMDSMat4, InternalLayer, InternalLayerConstructor, add_rc_and_sbox_generic,
@@ -90,18 +90,18 @@ where
 #[derive(Clone, Debug)]
 pub struct Poseidon2LinearLayersHorizon<F, const WIDTH: usize>(PhantomData<F>);
 
-impl<F: Sync + Copy + MatDiagMinusOne<WIDTH>, FA, const WIDTH: usize>
-    GenericPoseidon2LinearLayers<FA, WIDTH> for Poseidon2LinearLayersHorizon<F, WIDTH>
-where
-    FA: Algebra<F>,
+impl<F: PrimeField64 + Sync + Copy + MatDiagMinusOne<WIDTH>, const WIDTH: usize>
+    GenericPoseidon2LinearLayers<WIDTH> for Poseidon2LinearLayersHorizon<F, WIDTH>
 {
-    fn internal_linear_layer(state: &mut [FA; WIDTH]) {
-        let sum = state.iter().cloned().sum::<FA>();
-        zip(&mut *state, F::MAT_DIAG_M_1)
-            .for_each(|(state, mat_diag_m_1)| *state = state.clone() * mat_diag_m_1 + sum.clone());
+    fn internal_linear_layer<R: PrimeCharacteristicRing>(state: &mut [R; WIDTH]) {
+        let sum = state.iter().cloned().sum::<R>();
+        zip(&mut *state, F::MAT_DIAG_M_1).for_each(|(state, mat_diag_m_1)| {
+            let mat_diag_m_1 = R::from_u64(mat_diag_m_1.as_canonical_u64());
+            *state = state.clone() * mat_diag_m_1 + sum.clone();
+        });
     }
 
-    fn external_linear_layer(state: &mut [FA; WIDTH]) {
+    fn external_linear_layer<R: PrimeCharacteristicRing>(state: &mut [R; WIDTH]) {
         mds_light_permutation(state, &HLMDSMat4);
     }
 }

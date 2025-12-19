@@ -38,8 +38,8 @@ impl<AB: InteractionBuilder> Air<AB> for SendingAir {
         if !AB::ONLY_INTERACTION {
             let (output, inputs) = local.split_last().unwrap();
             builder.assert_eq(
-                AB::Expr::product(inputs.iter().copied().map_into()),
-                *output,
+                AB::Expr::product(inputs.iter().cloned().map(|v| v.into())),
+                output.clone(),
             );
         }
         builder.push_send(0, self.interaction_values(&local, &next), AB::Expr::ONE);
@@ -62,7 +62,7 @@ impl<AB: InteractionBuilder> Air<AB> for ReceivingAir {
         let main = builder.main();
         let local = main.row_slice(0).unwrap();
         let (mult, values) = local.split_last().unwrap();
-        builder.push_receive(0, cloned(values), *mult);
+        builder.push_receive(0, cloned(values), mult.clone());
     }
 }
 
@@ -93,16 +93,26 @@ impl<AB: InteractionBuilder> Air<AB> for MyAir {
 }
 
 impl SendingAir {
-    fn interaction_values<Var: Copy + Into<Expr>, Expr: Algebra<Var>>(
+    fn interaction_values<Var: Clone + Into<Expr>, Expr: Algebra<Var>>(
         &self,
         local: &[Var],
         next: &[Var],
     ) -> [Expr; 4] {
         [
-            Expr::sum(local.iter().copied().map_into()),
-            Expr::sum(next.iter().copied().map_into()),
-            Expr::product(local[..self.interaction_degree].iter().copied().map_into()),
-            Expr::product(next[..self.interaction_degree].iter().copied().map_into()),
+            Expr::sum(local.iter().cloned().map(|v| v.into())),
+            Expr::sum(next.iter().cloned().map(|v| v.into())),
+            Expr::product(
+                local[..self.interaction_degree]
+                    .iter()
+                    .cloned()
+                    .map(|v| v.into()),
+            ),
+            Expr::product(
+                next[..self.interaction_degree]
+                    .iter()
+                    .cloned()
+                    .map(|v| v.into()),
+            ),
         ]
     }
 
@@ -164,7 +174,7 @@ fn interaction() {
         let sending_trace = sending_air.generate_sending_trace(1 << log_b, &mut rng);
         let receiving_trace = sending_air.generate_receiving_trace(&sending_trace);
 
-        run::<Val, Challenge, _>(vec![
+        run::<Challenge, _>(vec![
             ProverInput::new(MyAir::Sending(sending_air), Vec::new(), sending_trace),
             ProverInput::new(MyAir::Receiving(ReceivingAir), Vec::new(), receiving_trace),
         ]);

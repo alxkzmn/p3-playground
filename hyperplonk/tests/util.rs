@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use p3_air::{Air, BaseAirWithPublicValues};
-use p3_challenger::{HashChallenger, SerializingChallenger32};
+use p3_challenger::DuplexChallenger;
 use p3_dft::Radix2DitParallel;
 use p3_field::{ExtensionField, PrimeField32, TwoAdicField};
 use p3_hyperplonk::{
@@ -9,47 +9,49 @@ use p3_hyperplonk::{
     ProverInteractionFolderOnPacking, SymbolicAirBuilder, VerifierConstraintFolder, keygen, prove,
     verify,
 };
-use p3_keccak::Keccak256Hash;
-use p3_symmetric::{CompressionFunctionFromHasher, SerializingHasher};
-use p3_whir::{FoldingFactor, ProtocolParameters, SecurityAssumption, WhirPcs};
+use p3_koala_bear::{KoalaBear, Poseidon2KoalaBear};
+use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
+use p3_whir::{FoldingFactor, InitialPhaseConfig, ProtocolParameters, SecurityAssumption, WhirPcs};
+use rand::SeedableRng;
 
-type ByteHash = Keccak256Hash;
-type FieldHash = SerializingHasher<ByteHash>;
-type MyCompress = CompressionFunctionFromHasher<ByteHash, 2, 32>;
-type Dft<Val> = Radix2DitParallel<Val>;
-type Pcs<Val, Dft> = WhirPcs<Val, Dft, FieldHash, MyCompress, 32>;
-type Challenger<Val> = SerializingChallenger32<Val, HashChallenger<u8, Keccak256Hash, 32>>;
+type Perm = Poseidon2KoalaBear<16>;
+const DIGEST_ELEMS: usize = 8;
+type FieldHash = PaddingFreeSponge<Perm, 16, 8, DIGEST_ELEMS>;
+type MyCompress = TruncatedPermutation<Perm, 2, DIGEST_ELEMS, 16>;
+type Dft = Radix2DitParallel<KoalaBear>;
+type Pcs = WhirPcs<KoalaBear, Dft, FieldHash, MyCompress, DIGEST_ELEMS>;
+type Challenger = DuplexChallenger<KoalaBear, Perm, 16, 8>;
 
 #[allow(clippy::multiple_bound_locations)]
 pub fn run<
-    Val,
     Challenge,
     #[cfg(feature = "check-constraints")] A: for<'a> Air<p3_air_ext::DebugConstraintBuilder<'a, Val>>,
     #[cfg(not(feature = "check-constraints"))] A,
 >(
-    prover_inputs: Vec<ProverInput<Val, A>>,
+    prover_inputs: Vec<ProverInput<KoalaBear, A>>,
 ) where
-    Val: TwoAdicField + PrimeField32,
-    Challenge: TwoAdicField + ExtensionField<Val>,
+    KoalaBear: TwoAdicField + PrimeField32,
+    Challenge: TwoAdicField + ExtensionField<KoalaBear>,
     A: Clone
-        + BaseAirWithPublicValues<Val>
-        + Air<SymbolicAirBuilder<Val>>
-        + for<'t> Air<ProverInteractionFolderOnExtension<'t, Val, Challenge>>
-        + for<'t> Air<ProverInteractionFolderOnPacking<'t, Val, Challenge>>
-        + for<'t> Air<ProverConstraintFolderOnPacking<'t, Val, Challenge>>
-        + for<'t> Air<ProverConstraintFolderOnExtension<'t, Val, Challenge>>
-        + for<'t> Air<ProverConstraintFolderOnExtensionPacking<'t, Val, Challenge>>
-        + for<'t> Air<VerifierConstraintFolder<'t, Val, Challenge>>,
+        + BaseAirWithPublicValues<KoalaBear>
+        + Air<SymbolicAirBuilder<KoalaBear>>
+        + for<'t> Air<ProverInteractionFolderOnExtension<'t, KoalaBear, Challenge>>
+        + for<'t> Air<ProverInteractionFolderOnPacking<'t, KoalaBear, Challenge>>
+        + for<'t> Air<ProverConstraintFolderOnPacking<'t, KoalaBear, Challenge>>
+        + for<'t> Air<ProverConstraintFolderOnExtension<'t, KoalaBear, Challenge>>
+        + for<'t> Air<ProverConstraintFolderOnExtensionPacking<'t, KoalaBear, Challenge>>
+        + for<'t> Air<VerifierConstraintFolder<'t, KoalaBear, Challenge>>,
 {
     let config = {
         let dft = Dft::default();
         let security_level = 60;
         let pow_bits = 0;
-        let byte_hash = ByteHash {};
-        let field_hash = FieldHash::new(byte_hash);
-        let compress = MyCompress::new(byte_hash);
+        let mut rng = rand::rngs::SmallRng::seed_from_u64(0);
+        let perm = Perm::new_from_rng_128(&mut rng);
+        let field_hash = FieldHash::new(perm.clone());
+        let compress = MyCompress::new(perm.clone());
         let whir_params = ProtocolParameters {
-            initial_statement: true,
+            initial_phase_config: InitialPhaseConfig::WithStatementClassic,
             security_level,
             pow_bits,
             folding_factor: FoldingFactor::Constant(4),
@@ -59,10 +61,7 @@ pub fn run<
             starting_log_inv_rate: 1,
             rs_domain_initial_reduction_factor: 3,
         };
-        HyperPlonkConfig::new(
-            Pcs::new(dft, whir_params),
-            Challenger::from_hasher(Vec::new(), Keccak256Hash {}),
-        )
+        HyperPlonkConfig::new(Pcs::new(dft, whir_params), Challenger::new(perm))
     };
 
     let verifier_inputs = prover_inputs

@@ -7,7 +7,7 @@ use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
-use p3_fri::{TwoAdicFriPcs, create_test_fri_config};
+use p3_fri::{TwoAdicFriPcs, create_test_fri_params};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
@@ -45,18 +45,21 @@ impl<AB: AirBuilderWithPublicValues> Air<AB> for FibonacciAir {
 
         let mut when_first_row = builder.when_first_row();
 
-        when_first_row.assert_eq(local.left, a);
-        when_first_row.assert_eq(local.right, b);
+        when_first_row.assert_eq(local.left.clone(), a);
+        when_first_row.assert_eq(local.right.clone(), b);
 
         let mut when_transition = builder.when_transition();
 
         // a' <- b
-        when_transition.assert_eq(local.right, next.left);
+        when_transition.assert_eq(local.right.clone(), next.left.clone());
 
         // b' <- a + b
-        when_transition.assert_eq(local.left + local.right, next.right);
+        when_transition.assert_eq(
+            local.left.clone() + local.right.clone(),
+            next.right.clone(),
+        );
 
-        builder.when_last_row().assert_eq(local.right, x);
+        builder.when_last_row().assert_eq(local.right.clone(), x);
     }
 }
 
@@ -125,8 +128,8 @@ fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
     let val_mmcs = ValMmcs::new(hash, compress);
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
     let dft = Dft::default();
-    let fri_config = create_test_fri_config(challenge_mmcs, log_final_poly_len);
-    let pcs = Pcs::new(dft, val_mmcs, fri_config);
+    let fri_params = create_test_fri_params(challenge_mmcs, log_final_poly_len);
+    let pcs = Pcs::new(dft, val_mmcs, fri_params);
     let challenger = Challenger::new(perm);
     let config = MyConfig::new(pcs, challenger);
     let (vk, pk) = keygen::<Val, _>(3, &[FibonacciAir {}]);
@@ -166,8 +169,8 @@ fn test_incorrect_public_value() {
     let val_mmcs = ValMmcs::new(hash, compress);
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
     let dft = Dft::default();
-    let fri_config = create_test_fri_config(challenge_mmcs, 1);
-    let pcs = Pcs::new(dft, val_mmcs, fri_config);
+    let fri_params = create_test_fri_params(challenge_mmcs, 1);
+    let pcs = Pcs::new(dft, val_mmcs, fri_params);
     let challenger = Challenger::new(perm);
     let config = MyConfig::new(pcs, challenger);
     let (_, pk) = keygen::<Val, _>(3, &[FibonacciAir {}]);

@@ -124,7 +124,7 @@ pub(crate) fn eval_log_up<AB: ExtensionBuilder>(
                         .filter(|j| i != *j)
                         .map(|j| denoms[*j].clone())
                         .product::<AB::ExprEF>()
-                        * numers[*i].clone()
+                        * Into::<AB::ExprEF>::into(numers[*i].clone())
                 })
                 .sum::<AB::ExprEF>()
         };
