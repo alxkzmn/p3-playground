@@ -187,7 +187,7 @@ where
                 // Fill the initial commitment root and observe it (matches verifier parsing logic).
                 let root = merkle_tree.borrow().as_ref().unwrap().root();
                 proof.initial_commitment = *root.as_ref();
-                challenger.observe_slice(proof.initial_commitment.as_ref());
+                challenger.observe_slice(root.as_ref());
 
                 // Commitment OOD statements (points are sampled from the challenger, then answers observed).
                 let mut ood_statement = EqStatement::initialize(num_variables);
@@ -297,7 +297,7 @@ where
             });
 
             Verifier::new(&config)
-                .verify::<DIGEST_ELEMS>(proof, challenger, &parsed_commitment, statement)
+                .verify(proof, challenger, &parsed_commitment, statement)
                 .map(|_| ())
                 .map_err(Into::into)
         })
@@ -305,13 +305,13 @@ where
 }
 
 pub struct ConcatMatsMeta {
-    log_b: usize,
+    pub(crate) log_b: usize,
     dimensions: Vec<Dimensions>,
     ranges: Vec<Range<usize>>,
 }
 
 impl ConcatMatsMeta {
-    fn new(dims: Vec<Dimensions>) -> Self {
+    pub(crate) fn new(dims: Vec<Dimensions>) -> Self {
         let (dimensions, ranges) = dims
             .iter()
             .enumerate()
@@ -342,7 +342,7 @@ impl ConcatMatsMeta {
         }
     }
 
-    fn max_log_width(&self) -> usize {
+    pub(crate) fn max_log_width(&self) -> usize {
         self.dimensions
             .iter()
             .map(|dim| log2_ceil_usize(dim.width))
@@ -350,7 +350,7 @@ impl ConcatMatsMeta {
             .unwrap_or_default()
     }
 
-    fn constraint<Challenge: Field>(
+    pub(crate) fn constraint<Challenge: Field>(
         &self,
         idx: usize,
         query: &MlQuery<Challenge>,
@@ -381,27 +381,17 @@ impl ConcatMatsMeta {
             MlQuery::EqRotateRight(_, _) => {
                 unimplemented!("WhirPcs does not support MlQuery::EqRotateRight")
             }
-            // MlQuery::EqRotateRight(_, _) => {
-            //     let mut weight = Challenge::zero_vec(1 << self.log_b);
-            //     weight[self.ranges[idx].clone()]
-            //         .par_chunks_mut(eq_r.len())
-            //         .zip(query.to_mle(Challenge::ONE))
-            //         .for_each(|(weight, query)| {
-            //             izip!(weight, &eq_r).for_each(|(weight, eq_r)| *weight = *eq_r * query)
-            //         });
-            //     Weights::linear(EvaluationsList::new(weight))
-            // }
         }
     }
 }
 
 pub struct ConcatMats<Val> {
-    values: Vec<Val>,
-    meta: ConcatMatsMeta,
+    pub(crate) values: Vec<Val>,
+    pub(crate) meta: ConcatMatsMeta,
 }
 
 impl<Val: Field> ConcatMats<Val> {
-    fn new(mats: Vec<RowMajorMatrix<Val>>) -> Self {
+    pub(crate) fn new(mats: Vec<RowMajorMatrix<Val>>) -> Self {
         let meta = ConcatMatsMeta::new(mats.iter().map(Matrix::dimensions).collect());
         let mut values = Val::zero_vec(1 << meta.log_b);
         izip!(&meta.ranges, mats).for_each(|(range, mat)| {
@@ -414,7 +404,10 @@ impl<Val: Field> ConcatMats<Val> {
         Self { values, meta }
     }
 
-    fn mat(&self, idx: usize) -> HorizontallyTruncated<Val, RowMajorMatrixView<'_, Val>> {
+    pub(crate) fn mat(
+        &self,
+        idx: usize,
+    ) -> HorizontallyTruncated<Val, RowMajorMatrixView<'_, Val>> {
         HorizontallyTruncated::new(
             RowMajorMatrixView::new(
                 &self.values[self.meta.ranges[idx].clone()],
