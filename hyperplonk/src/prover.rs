@@ -59,27 +59,8 @@ where
     let pcs = config.pcs();
     let mut challenger = config.initialise_challenger();
 
-    // Commit to two matrices per AIR:
-    // - original trace
-    // - trace shifted by 1 row (cyclic), used for "next" evaluations
-    let traces_for_commit = info_span!("prepare shifted traces").in_scope(|| {
-        let mut out = Vec::with_capacity(traces.len() * 2);
-        for trace in &traces {
-            out.push(trace.clone());
-            let width = trace.width;
-            let values = &trace.values;
-            debug_assert!(values.len().is_multiple_of(width));
-            // Cyclic shift by one row: row i := row (i+1 mod h).
-            let mut shifted = Vec::with_capacity(values.len());
-            shifted.extend_from_slice(&values[width..]);
-            shifted.extend_from_slice(&values[..width]);
-            out.push(DenseMatrix::new(shifted, width));
-        }
-        out
-    });
-
     let (commitment, prover_data) =
-        info_span!("commit to main data").in_scope(|| pcs.commit(traces_for_commit));
+        info_span!("commit to main data").in_scope(|| pcs.commit(traces));
 
     cloned(&log_bs).for_each(|log_b| challenger.observe(Val::<C>::from_u8(log_b as u8)));
     challenger.observe(commitment.clone());
@@ -88,10 +69,8 @@ where
         .for_each(|input| challenger.observe_slice(input.public_values()));
 
     let (zs, piop) = {
-        // Only the original (unshifted) traces are used to build the PIOP objects.
-        // They are at even indices in the committed batch.
         let traces = (0..pk.metas().len())
-            .map(|i| pcs.get_evaluations(&prover_data, 2 * i))
+            .map(|i| pcs.get_evaluations(&prover_data, i))
             .collect();
         prove_piop(pk, &inputs, traces, &mut challenger)
     };

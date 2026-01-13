@@ -11,7 +11,7 @@ use crate::air::RoundConstants;
 
 pub fn generate_trace_rows_for_perm<
     F: PrimeField,
-    LinearLayers: GenericPoseidon2LinearLayers<F, WIDTH>,
+    LinearLayers: GenericPoseidon2LinearLayers<WIDTH>,
     const WIDTH: usize,
     const SBOX_DEGREE: u64,
     const SBOX_REGISTERS: usize,
@@ -75,7 +75,7 @@ pub fn generate_trace_rows_for_perm<
 #[inline]
 fn generate_full_round<
     F: PrimeField,
-    LinearLayers: GenericPoseidon2LinearLayers<F, WIDTH>,
+    LinearLayers: GenericPoseidon2LinearLayers<WIDTH>,
     const WIDTH: usize,
     const SBOX_DEGREE: u64,
     const SBOX_REGISTERS: usize,
@@ -103,7 +103,7 @@ fn generate_full_round<
 #[inline]
 fn generate_partial_round<
     F: PrimeField,
-    LinearLayers: GenericPoseidon2LinearLayers<F, WIDTH>,
+    LinearLayers: GenericPoseidon2LinearLayers<WIDTH>,
     const WIDTH: usize,
     const SBOX_DEGREE: u64,
     const SBOX_REGISTERS: usize,

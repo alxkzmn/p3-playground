@@ -21,6 +21,7 @@ type MyCompress = TruncatedPermutation<Perm, 2, DIGEST_ELEMS, 16>;
 type Dft = Radix2DitParallel<KoalaBear>;
 type Pcs = WhirPcs<KoalaBear, Dft, FieldHash, MyCompress, DIGEST_ELEMS>;
 type Challenger = DuplexChallenger<KoalaBear, Perm, 16, 8>;
+type Val = KoalaBear;
 
 #[allow(clippy::multiple_bound_locations)]
 pub fn run<
