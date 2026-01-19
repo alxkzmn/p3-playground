@@ -2,18 +2,18 @@ use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithPublicValues};
 use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
-use p3_field::{BasedVectorSpace, PackedValue, PrimeField32};
+use p3_field::BasedVectorSpace;
 use p3_hyperplonk::{HyperPlonkConfig, ProverInput, keygen, prove};
 use p3_keccak::Keccak256Hash;
 use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear};
 use p3_poseidon2_air::{RoundConstants, generate_trace_rows, num_cols};
-use p3_symmetric::{CryptographicHasher, PseudoCompressionFunction};
 use p3_whir::{
-    FoldingFactor, InitialPhaseConfig, ProtocolParameters, SecurityAssumption, WhirPcsKeccak,
+    FoldingFactor, InitialPhaseConfig, KeccakNodeCompress, KeccakU32BeLeafHasher,
+    ProtocolParameters, SecurityAssumption, WhirPcsKeccak, digest_u64_to_bytes32,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use whir_p3::whir::proof::WhirProofKeccak;
+use whir_p3::whir::proof::WhirProof;
 
 type Val = KoalaBear;
 type Challenge = BinomialExtensionField<Val, 4>;
@@ -21,40 +21,7 @@ type LinearLayers = GenericPoseidon2LinearLayersKoalaBear;
 
 const DIGEST_BYTES: usize = 32;
 
-#[derive(Clone, Copy, Debug, Default)]
-struct KeccakLeafHasher;
-
-impl<P> CryptographicHasher<P, [u8; DIGEST_BYTES]> for KeccakLeafHasher
-where
-    P: PackedValue,
-    P::Value: PrimeField32,
-{
-    fn hash_iter<I>(&self, input: I) -> [u8; DIGEST_BYTES]
-    where
-        I: IntoIterator<Item = P>,
-    {
-        let mut preimage = Vec::<u8>::new();
-        preimage.push(0x00);
-        for packed in input {
-            for &x in packed.as_slice() {
-                preimage.extend_from_slice(&x.as_canonical_u32().to_be_bytes());
-            }
-        }
-        Keccak256Hash.hash_iter(preimage)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct KeccakNodeCompress;
-
-impl PseudoCompressionFunction<[u8; DIGEST_BYTES], 2> for KeccakNodeCompress {
-    fn compress(&self, input: [[u8; DIGEST_BYTES]; 2]) -> [u8; DIGEST_BYTES] {
-        let prefix = [0x01u8];
-        Keccak256Hash.hash_iter_slices([&prefix[..], &input[0][..], &input[1][..]])
-    }
-}
-
-type FieldHash = KeccakLeafHasher;
+type FieldHash = KeccakU32BeLeafHasher;
 type Compress = KeccakNodeCompress;
 type Dft<Val> = Radix2DitParallel<Val>;
 type Pcs<Val, Dft> = WhirPcsKeccak<Val, Dft, FieldHash, Compress>;
@@ -171,21 +138,21 @@ fn main() {
     let prover_inputs = vec![ProverInput::new(make_air(), Vec::new(), trace)];
     let proof = prove(&config, &pk, prover_inputs);
 
-    // PCS proof is a `Vec<WhirProofKeccak<Val, Challenge>>`.
-    let pcs_proofs: &Vec<WhirProofKeccak<Val, Challenge>> = &proof.pcs;
+    // PCS proof is a `Vec<WhirProof<Val, Challenge, u64, 4>>`.
+    let pcs_proofs: &Vec<WhirProof<Val, Challenge, u64, 4>> = &proof.pcs;
 
     println!("{{");
     // HyperPlonk commitment (PCS commitment) is bytes32 in Keccak mode.
     println!(
         "  \"commitment_bytes32\": \"0x{}\",",
-        hex(proof.commitment.as_ref())
+        hex(&digest_u64_to_bytes32(proof.commitment.as_ref()))
     );
     println!("  \"pcs\": [");
     for (pi, pcs) in pcs_proofs.iter().enumerate() {
         println!("    {{");
         println!(
             "      \"initial_root\": \"0x{}\",",
-            hex32(&pcs.initial_commitment)
+            hex32(&digest_u64_to_bytes32(&pcs.initial_commitment))
         );
 
         // Initial openings live in round proofs / final_queries; we dump them all.
@@ -193,7 +160,10 @@ fn main() {
         for (ri, round) in pcs.rounds.iter().enumerate() {
             println!("        {{");
             println!("          \"round_index\": {},", ri);
-            println!("          \"root\": \"0x{}\",", hex32(&round.commitment));
+            println!(
+                "          \"root\": \"0x{}\",",
+                hex32(&digest_u64_to_bytes32(&round.commitment))
+            );
             println!("          \"queries\": [");
             for (qi, q) in round.queries.iter().enumerate() {
                 let (kind, payload, siblings) = if let Some(vals) = q.base_values() {
@@ -220,7 +190,8 @@ fn main() {
                 println!("              \"siblings\": [");
                 for (si, sib) in siblings.iter().enumerate() {
                     let comma = if si + 1 == siblings.len() { "" } else { "," };
-                    println!("                \"0x{}\"{}", hex32(sib), comma);
+                    let sib_bytes = digest_u64_to_bytes32(sib);
+                    println!("                \"0x{}\"{}", hex32(&sib_bytes), comma);
                 }
                 println!("              ]");
                 let comma = if qi + 1 == round.queries.len() {

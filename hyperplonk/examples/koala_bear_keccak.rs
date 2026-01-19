@@ -5,12 +5,12 @@ use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
 use p3_hyperplonk::{HyperPlonkConfig, ProverInput, VerifierInput, keygen, prove, verify};
-use p3_keccak::Keccak256Hash;
+use p3_keccak::{Keccak256Hash, KeccakF};
 use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear};
 use p3_poseidon2_air::{RoundConstants, generate_trace_rows, num_cols};
+use p3_symmetric::{CompressionFunctionFromHasher, PaddingFreeSponge, SerializingHasher};
 use p3_whir::{
-    FoldingFactor, InitialPhaseConfig, KeccakNodeCompress, KeccakU32BeLeafHasher,
-    ProtocolParameters, SecurityAssumption, WhirPcsKeccak,
+    FoldingFactor, InitialPhaseConfig, ProtocolParameters, SecurityAssumption, WhirPcsKeccak,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -26,8 +26,9 @@ type Val = KoalaBear;
 type Challenge = BinomialExtensionField<Val, 4>;
 type LinearLayers = GenericPoseidon2LinearLayersKoalaBear;
 
-type FieldHash = KeccakU32BeLeafHasher;
-type Compress = KeccakNodeCompress;
+type U64Hash = PaddingFreeSponge<KeccakF, 25, 17, 4>;
+type FieldHash = SerializingHasher<U64Hash>;
+type Compress = CompressionFunctionFromHasher<U64Hash, 2, 4>;
 type Dft<Val> = Radix2DitParallel<Val>;
 type Pcs<Val, Dft> = WhirPcsKeccak<Val, Dft, FieldHash, Compress>;
 type Challenger = SerializingChallenger32<Val, HashChallenger<u8, Keccak256Hash, 32>>;

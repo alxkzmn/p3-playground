@@ -38,7 +38,6 @@ whir-p3.workspace = true
 [features]
 check-constraints = ["p3-air-ext/check-constraints"]
 parallel = ["p3-maybe-rayon/parallel"]
-keccak = ["p3-whir/keccak"]
 
 bench = ["parallel"]
 

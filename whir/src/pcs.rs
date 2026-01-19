@@ -8,9 +8,7 @@ use core::mem::replace;
 use core::ops::Range;
 
 use itertools::{Itertools, chain, cloned, izip, rev};
-#[cfg(feature = "keccak")]
-use p3_challenger::CanObserve;
-use p3_challenger::{FieldChallenger, GrindingChallenger};
+use p3_challenger::{CanObserve, FieldChallenger, GrindingChallenger};
 use p3_commit::Mmcs;
 use p3_dft::TwoAdicSubgroupDft;
 use p3_field::{ExtensionField, Field, PrimeField64, TwoAdicField, dot_product};
@@ -20,26 +18,23 @@ use p3_matrix::{Dimensions, Matrix};
 use p3_maybe_rayon::prelude::*;
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_ml_pcs::{MlPcs, MlQuery, eq_poly};
-#[cfg(feature = "keccak")]
-use p3_symmetric::Hash as MerkleHash;
-use p3_symmetric::{CryptographicHasher, PseudoCompressionFunction};
+use p3_symmetric::{CryptographicHasher, Hash as SymHash, PseudoCompressionFunction};
 use p3_util::{log2_ceil_usize, log2_strict_usize};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tracing::info_span;
-use whir_p3::errors::WhirError;
 use whir_p3::fiat_shamir::domain_separator::DomainSeparator;
 use whir_p3::poly::evals::EvaluationsList;
 use whir_p3::poly::multilinear::MultilinearPoint;
 use whir_p3::whir::committer::Witness;
 use whir_p3::whir::committer::reader::CommitmentReader;
-use whir_p3::whir::constraints::statement::EqStatement;
-#[cfg(feature = "keccak")]
-use whir_p3::whir::digest::{LeafPacking, ObserveMerkleRoot};
 use whir_p3::whir::parameters::WhirConfig;
 use whir_p3::whir::proof::{InitialPhase, SumcheckData, WhirProof};
 use whir_p3::whir::prover::Prover;
 use whir_p3::whir::verifier::Verifier;
+use whir_p3::whir::verifier::errors::VerifierError;
+
+use crate::linear_constraints::LinearEqStatement;
 
 type WhirMmcs<Val, Hash, Compression, const DIGEST_ELEMS: usize> = MerkleTreeMmcs<
     <Val as Field>::Packing,
@@ -49,15 +44,13 @@ type WhirMmcs<Val, Hash, Compression, const DIGEST_ELEMS: usize> = MerkleTreeMmc
     DIGEST_ELEMS,
 >;
 
-#[cfg(feature = "keccak")]
-type WhirMmcsKeccak<Val, Hash, Compression> = MerkleTreeMmcs<Val, u8, Hash, Compression, 32>;
+type WhirMmcsKeccak<Val, Hash, Compression> = MerkleTreeMmcs<Val, u64, Hash, Compression, 4>;
 
 /// Marker type selecting the default (field-hash) Merkle commitment flavor.
 #[derive(Debug, Clone, Copy)]
 pub struct FieldHashFlavor;
 
 /// Marker type selecting the Keccak bytes32 Merkle commitment flavor.
-#[cfg(feature = "keccak")]
 #[derive(Debug, Clone, Copy)]
 pub struct KeccakFlavor;
 
@@ -91,6 +84,7 @@ impl<Val, Dft, Hash, Compression, Challenge, Challenger, const DIGEST_ELEMS: usi
     for WhirPcs<Val, Dft, Hash, Compression, DIGEST_ELEMS, FieldHashFlavor>
 where
     Val: TwoAdicField + PrimeField64 + Ord + Serialize + DeserializeOwned,
+    <Val as Field>::Packing: Eq,
     Dft: TwoAdicSubgroupDft<Val>,
     Hash: Clone
         + Sync
@@ -101,7 +95,9 @@ where
         + PseudoCompressionFunction<[Val; DIGEST_ELEMS], 2>
         + PseudoCompressionFunction<[Val::Packing; DIGEST_ELEMS], 2>,
     Challenge: TwoAdicField + ExtensionField<Val> + Serialize + DeserializeOwned,
-    Challenger: FieldChallenger<Val> + GrindingChallenger<Witness = Val>,
+    Challenger: FieldChallenger<Val>
+        + GrindingChallenger<Witness = Val>
+        + CanObserve<SymHash<Val, Val, DIGEST_ELEMS>>,
     [Val; DIGEST_ELEMS]: Serialize + DeserializeOwned,
 {
     type Val = Val;
@@ -117,8 +113,8 @@ where
         >,
     );
     type Evaluations<'a> = HorizontallyTruncated<Val, RowMajorMatrixView<'a, Val>>;
-    type Proof = Vec<WhirProof<Val, Challenge, DIGEST_ELEMS>>;
-    type Error = WhirError;
+    type Proof = Vec<WhirProof<Val, Challenge, Val, DIGEST_ELEMS>>;
+    type Error = VerifierError;
 
     fn commit(
         &self,
@@ -199,7 +195,8 @@ where
                 domainsep.observe_domain_separator(challenger);
 
                 // Prepare proof container and witness pieces.
-                let mut proof = WhirProof::<Val, Challenge, DIGEST_ELEMS>::from_protocol_parameters(
+                let mut proof =
+                    WhirProof::<Val, Challenge, Val, DIGEST_ELEMS>::from_protocol_parameters(
                     &self.whir,
                     num_variables,
                 );
@@ -209,10 +206,10 @@ where
                 // Fill the initial commitment root and observe it (matches verifier parsing logic).
                 let root = merkle_tree.borrow().as_ref().unwrap().root();
                 proof.initial_commitment = *root.as_ref();
-                challenger.observe_slice(root.as_ref());
+                challenger.observe(root);
 
                 // Commitment OOD statements (points are sampled from the challenger, then answers observed).
-                let mut ood_statement = EqStatement::initialize(num_variables);
+                let mut ood_statement = LinearEqStatement::initialize(num_variables);
                 (0..config.commitment_ood_samples).for_each(|_| {
                     let u: Challenge = challenger.sample_algebra_element();
                     let point = MultilinearPoint::expand_from_univariate(u, num_variables);
@@ -228,7 +225,7 @@ where
                     .collect_vec();
 
                 let statement = info_span!("build EqStatement").in_scope(|| {
-                    let mut statement = EqStatement::initialize(num_variables);
+                    let mut statement = LinearEqStatement::initialize(num_variables);
                     queries_and_evals
                         .iter()
                         .enumerate()
@@ -272,13 +269,18 @@ where
                 let witness = Witness {
                     polynomial,
                     prover_data: Arc::new(merkle_tree.take().unwrap()),
-                    ood_statement,
+                    ood_statement: ood_statement.into_eq_statement(),
                 };
 
                 info_span!("whir_p3::prove").in_scope(|| {
+                    let statement = statement.into_eq_statement();
                     Prover(&config)
-                        .prove::<_, DIGEST_ELEMS, Val>(
-                            &self.dft, &mut proof, challenger, statement, witness,
+                        .prove::<_, <Val as Field>::Packing, Val, <Val as Field>::Packing, DIGEST_ELEMS>(
+                            &self.dft,
+                            &mut proof,
+                            challenger,
+                            statement,
+                            witness,
                         )
                         .expect("WHIR proving failed");
                 });
@@ -337,14 +339,14 @@ where
 
             // Parse commitment root + OOD statement from transcript (matches prover observation order).
             let parsed_commitment = CommitmentReader::new(&config)
-                .parse_commitment::<DIGEST_ELEMS, Val>(proof, challenger);
+                .parse_commitment::<Val, DIGEST_ELEMS>(proof, challenger);
             debug_assert_eq!(parsed_commitment.root, commitment);
 
             // Sample the same column-combination randomness and rebuild the same statement.
             let r = repeat_with(|| challenger.sample_algebra_element::<Challenge>())
                 .take(concat_mats_meta.max_log_width())
                 .collect_vec();
-            let mut statement = EqStatement::initialize(num_variables);
+            let mut statement = LinearEqStatement::initialize(num_variables);
             round.iter().enumerate().for_each(|(idx, evals)| {
                 evals.iter().for_each(|(query, evals)| {
                     let (constraint, sum) = concat_mats_meta.constraint(idx, query, evals, &r);
@@ -358,33 +360,32 @@ where
                     }
                 })
             });
+            let statement = statement.into_eq_statement();
 
             Verifier::new(&config)
-                .verify::<DIGEST_ELEMS, Val>(proof, challenger, &parsed_commitment, statement)
+                .verify::<<Val as Field>::Packing, Val, <Val as Field>::Packing, DIGEST_ELEMS>(
+                    proof,
+                    challenger,
+                    &parsed_commitment,
+                    statement,
+                )
                 .map(|_| ())
                 .map_err(Into::into)
         })
     }
 }
 
-#[cfg(feature = "keccak")]
 impl<Val, Dft, Hash, Compression, Challenge, Challenger> MlPcs<Challenge, Challenger>
-    for WhirPcs<Val, Dft, Hash, Compression, 32, KeccakFlavor>
+    for WhirPcs<Val, Dft, Hash, Compression, 4, KeccakFlavor>
 where
     Val: TwoAdicField + PrimeField64 + Ord + Serialize + DeserializeOwned,
     Dft: TwoAdicSubgroupDft<Val>,
-    Hash: Clone
-        + Sync
-        + CryptographicHasher<Val, [u8; 32]>
-        + CryptographicHasher<Val::Packing, [u8; 32]>,
-    Compression: Clone + Sync + PseudoCompressionFunction<[u8; 32], 2>,
+    Hash: Clone + Sync + CryptographicHasher<Val, [u64; 4]> + CryptographicHasher<Val, [u64; 4]>,
+    Compression: Clone + Sync + PseudoCompressionFunction<[u64; 4], 2>,
     Challenge: TwoAdicField + ExtensionField<Val> + Serialize + DeserializeOwned,
-    Challenger: FieldChallenger<Val>
-        + GrindingChallenger<Witness = Val>
-        + CanObserve<MerkleHash<Val, u8, 32>>,
-    u8: LeafPacking<Val, Packed = u8, LeafPacked = Val>,
-    (): ObserveMerkleRoot<Val, u8, 32, Obs = MerkleHash<Val, u8, 32>>,
-    [u8; 32]: Serialize + DeserializeOwned,
+    Challenger:
+        FieldChallenger<Val> + GrindingChallenger<Witness = Val> + CanObserve<SymHash<Val, u64, 4>>,
+    [u64; 4]: Serialize + DeserializeOwned,
 {
     type Val = Val;
     type Commitment = <WhirMmcsKeccak<Val, Hash, Compression> as Mmcs<Val>>::Commitment;
@@ -397,8 +398,8 @@ where
         >,
     );
     type Evaluations<'a> = HorizontallyTruncated<Val, RowMajorMatrixView<'a, Val>>;
-    type Proof = Vec<WhirProof<Val, Challenge, 32, u8>>;
-    type Error = WhirError;
+    type Proof = Vec<WhirProof<Val, Challenge, u64, 4>>;
+    type Error = VerifierError;
 
     fn commit(
         &self,
@@ -462,11 +463,11 @@ where
 
                 let mut domainsep: DomainSeparator<Challenge, Val> =
                     DomainSeparator::new(Vec::new());
-                domainsep.commit_statement::<_, _, _, 32>(&config);
-                domainsep.add_whir_proof::<_, _, _, 32>(&config);
+                domainsep.commit_statement::<_, _, _, 4>(&config);
+                domainsep.add_whir_proof::<_, _, _, 4>(&config);
                 domainsep.observe_domain_separator(challenger);
 
-                let mut proof = WhirProof::<Val, Challenge, 32, u8>::from_protocol_parameters(
+                let mut proof = WhirProof::<Val, Challenge, u64, 4>::from_protocol_parameters(
                     &self.whir,
                     num_variables,
                 );
@@ -477,7 +478,7 @@ where
                 proof.initial_commitment = *root.as_ref();
                 challenger.observe(root);
 
-                let mut ood_statement = EqStatement::initialize(num_variables);
+                let mut ood_statement = LinearEqStatement::initialize(num_variables);
                 (0..config.commitment_ood_samples).for_each(|_| {
                     let u: Challenge = challenger.sample_algebra_element();
                     let point = MultilinearPoint::expand_from_univariate(u, num_variables);
@@ -492,7 +493,7 @@ where
                     .collect_vec();
 
                 let statement = info_span!("build EqStatement").in_scope(|| {
-                    let mut statement = EqStatement::initialize(num_variables);
+                    let mut statement = LinearEqStatement::initialize(num_variables);
                     queries_and_evals
                         .iter()
                         .enumerate()
@@ -526,15 +527,18 @@ where
                     }
                 }
 
-                let witness = Witness::<Challenge, Val, DenseMatrix<Val>, 32, u8> {
+                let witness = Witness::<Challenge, Val, DenseMatrix<Val>, u64, 4> {
                     polynomial,
                     prover_data: Arc::new(merkle_tree.take().unwrap()),
-                    ood_statement,
+                    ood_statement: ood_statement.into_eq_statement(),
                 };
 
                 info_span!("whir_p3::prove").in_scope(|| {
+                    let statement = statement.into_eq_statement();
                     Prover(&config)
-                        .prove::<_, 32, u8>(&self.dft, &mut proof, challenger, statement, witness)
+                        .prove::<_, Val, u64, u64, 4>(
+                            &self.dft, &mut proof, challenger, statement, witness,
+                        )
                         .expect("WHIR proving failed");
                 });
 
@@ -570,18 +574,18 @@ where
             );
 
             let mut domainsep: DomainSeparator<Challenge, Val> = DomainSeparator::new(Vec::new());
-            domainsep.commit_statement::<_, _, _, 32>(&config);
-            domainsep.add_whir_proof::<_, _, _, 32>(&config);
+            domainsep.commit_statement::<_, _, _, 4>(&config);
+            domainsep.add_whir_proof::<_, _, _, 4>(&config);
             domainsep.observe_domain_separator(challenger);
 
             let parsed_commitment =
-                CommitmentReader::new(&config).parse_commitment::<32, u8>(proof, challenger);
+                CommitmentReader::new(&config).parse_commitment::<u64, 4>(proof, challenger);
             debug_assert_eq!(parsed_commitment.root, commitment);
 
             let r = repeat_with(|| challenger.sample_algebra_element::<Challenge>())
                 .take(concat_mats_meta.max_log_width())
                 .collect_vec();
-            let mut statement = EqStatement::initialize(num_variables);
+            let mut statement = LinearEqStatement::initialize(num_variables);
             round.iter().enumerate().for_each(|(idx, evals)| {
                 evals.iter().for_each(|(query, ys)| {
                     let (constraint, sum) = concat_mats_meta.constraint(idx, query, ys, &r);
@@ -595,9 +599,10 @@ where
                     }
                 })
             });
+            let statement = statement.into_eq_statement();
 
             Verifier::new(&config)
-                .verify::<32, u8>(proof, challenger, &parsed_commitment, statement)
+                .verify::<Val, u64, u64, 4>(proof, challenger, &parsed_commitment, statement)
                 .map(|_| ())
                 .map_err(Into::into)
         })
