@@ -209,10 +209,12 @@ macro_rules! make_tests_for_pcs {
 
 mod koala_bear_whir_pcs {
     use p3_challenger::DuplexChallenger;
+    use p3_field::PrimeCharacteristicRing;
     use p3_koala_bear::Poseidon2KoalaBear;
     use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
     use p3_whir::{FoldingFactor, ProtocolParameters, SecurityAssumption, WhirPcs};
     use whir_p3::whir::parameters::InitialPhaseConfig;
+    use whir_p3::whir::proof::WhirProof;
 
     use super::*;
 
@@ -225,6 +227,8 @@ mod koala_bear_whir_pcs {
     type Dft = Radix2DitParallel<Val>;
     type Challenger = DuplexChallenger<Val, Perm, 16, 8>;
     type MyPcs = WhirPcs<Val, Dft, FieldHash, Compress, DIGEST_ELEMS>;
+    type Commitment = <MyPcs as MlPcs<Challenge, Challenger>>::Commitment;
+    type Proof = Vec<WhirProof<Val, Challenge, Val, DIGEST_ELEMS>>;
 
     fn get_pcs(
         log_blowup: usize,
@@ -255,8 +259,292 @@ mod koala_bear_whir_pcs {
         (MyPcs::new(dft, whir_params), Challenger::new(perm))
     }
 
+    fn build_single_round(
+        (pcs, challenger): &(MyPcs, Challenger),
+        log_b: usize,
+    ) -> (
+        Vec<(Commitment, Vec<Vec<(MlQuery<Challenge>, Vec<Challenge>)>>)>,
+        Proof,
+    ) {
+        let mut rng = seeded_rng();
+        let mut p_challenger = challenger.clone();
+
+        let height = 1 << log_b;
+        let width = 8;
+        let poly = RowMajorMatrix::<Val>::rand(&mut rng, height, width);
+        let (commitment, prover_data) =
+            <MyPcs as MlPcs<Challenge, Challenger>>::commit(pcs, vec![poly.clone()]);
+        p_challenger.observe(commitment.clone());
+
+        let zeta: Vec<Challenge> = repeat_with(|| p_challenger.sample_algebra_element())
+            .take(log_b)
+            .collect();
+        let queries = vec![vec![MlQuery::Eq(zeta.clone())]];
+        let opening = {
+            let mat =
+                <MyPcs as MlPcs<Challenge, Challenger>>::get_evaluations(pcs, &prover_data, 0);
+            vec![vec![mat.columnwise_dot_product(
+                &queries[0][0].to_mle(Challenge::ONE),
+            )]]
+        };
+
+        let data_and_queries_and_evals = vec![(
+            &prover_data,
+            vec![vec![(queries[0][0].clone(), opening[0][0].to_vec())]],
+        )];
+        let proof = <MyPcs as MlPcs<Challenge, Challenger>>::open(
+            pcs,
+            data_and_queries_and_evals,
+            &mut p_challenger,
+        );
+
+        let commits_and_claims = vec![(
+            commitment,
+            vec![vec![(MlQuery::Eq(zeta), opening[0][0].clone())]],
+        )];
+
+        (commits_and_claims, proof)
+    }
+
+    fn build_single_round_rotate(
+        (pcs, challenger): &(MyPcs, Challenger),
+        log_b: usize,
+        rotate_by: usize,
+    ) -> (
+        Vec<(Commitment, Vec<Vec<(MlQuery<Challenge>, Vec<Challenge>)>>)>,
+        Proof,
+    ) {
+        let mut rng = seeded_rng();
+        let mut p_challenger = challenger.clone();
+
+        let height = 1 << log_b;
+        let width = 8;
+        let poly = RowMajorMatrix::<Val>::rand(&mut rng, height, width);
+        let (commitment, prover_data) =
+            <MyPcs as MlPcs<Challenge, Challenger>>::commit(pcs, vec![poly.clone()]);
+        p_challenger.observe(commitment.clone());
+
+        let zeta: Vec<Challenge> = repeat_with(|| p_challenger.sample_algebra_element())
+            .take(log_b)
+            .collect();
+        let queries = vec![vec![MlQuery::EqRotateRight(zeta.clone(), rotate_by)]];
+        let opening = {
+            let mat =
+                <MyPcs as MlPcs<Challenge, Challenger>>::get_evaluations(pcs, &prover_data, 0);
+            vec![vec![mat.columnwise_dot_product(
+                &queries[0][0].to_mle(Challenge::ONE),
+            )]]
+        };
+
+        let data_and_queries_and_evals = vec![(
+            &prover_data,
+            vec![vec![(queries[0][0].clone(), opening[0][0].to_vec())]],
+        )];
+        let proof = <MyPcs as MlPcs<Challenge, Challenger>>::open(
+            pcs,
+            data_and_queries_and_evals,
+            &mut p_challenger,
+        );
+
+        let commits_and_claims = vec![(
+            commitment,
+            vec![vec![(
+                MlQuery::EqRotateRight(zeta, rotate_by),
+                opening[0][0].clone(),
+            )]],
+        )];
+
+        (commits_and_claims, proof)
+    }
+
     mod blowup_1 {
         make_tests_for_pcs!(super::get_pcs(1, 4, 4));
+    }
+
+    #[test]
+    fn negative_tampered_proof_rejected() {
+        let p = get_pcs(1, 4, 4);
+        let (commits_and_claims, proof) = build_single_round(&p, 4);
+
+        let commits = commits_and_claims
+            .iter()
+            .map(|(c, _)| c.clone())
+            .collect_vec();
+        let mut v_challenger = p.1.clone();
+        v_challenger.observe_slice(&commits);
+        if let MlQuery::Eq(z) = &commits_and_claims[0].1[0][0].0 {
+            let verifier_zeta: Vec<Challenge> =
+                repeat_with(|| v_challenger.sample_algebra_element())
+                    .take(z.len())
+                    .collect();
+            assert_eq!(&verifier_zeta, z);
+        }
+        <MyPcs as MlPcs<Challenge, Challenger>>::verify(
+            &p.0,
+            commits_and_claims.clone(),
+            &proof,
+            &mut v_challenger,
+        )
+        .unwrap();
+
+        let mut bad_proof = proof.clone();
+        if let Some(first) = bad_proof.first_mut() {
+            if let Some(val) = first.initial_ood_answers.first_mut() {
+                *val += Challenge::ONE;
+            } else if let Some(round) = first.rounds.first_mut() {
+                if let Some(val) = round.ood_answers.first_mut() {
+                    *val += Challenge::ONE;
+                } else {
+                    round.pow_witness += Val::ONE;
+                }
+            } else {
+                first.final_pow_witness += Val::ONE;
+            }
+        }
+
+        let mut bad_challenger = p.1.clone();
+        bad_challenger.observe_slice(&commits);
+        if let MlQuery::Eq(z) = &commits_and_claims[0].1[0][0].0 {
+            let verifier_zeta: Vec<Challenge> =
+                repeat_with(|| bad_challenger.sample_algebra_element())
+                    .take(z.len())
+                    .collect();
+            assert_eq!(&verifier_zeta, z);
+        }
+        assert!(
+            <MyPcs as MlPcs<Challenge, Challenger>>::verify(
+                &p.0,
+                commits_and_claims,
+                &bad_proof,
+                &mut bad_challenger,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn negative_tampered_claim_rejected() {
+        let p = get_pcs(1, 4, 4);
+        let (mut commits_and_claims, proof) = build_single_round(&p, 4);
+
+        let (_, claims) = &mut commits_and_claims[0];
+        claims[0][0].1[0] += Challenge::ONE;
+
+        let commits = commits_and_claims
+            .iter()
+            .map(|(c, _)| c.clone())
+            .collect_vec();
+        let mut v_challenger = p.1.clone();
+        v_challenger.observe_slice(&commits);
+        if let MlQuery::Eq(z) = &commits_and_claims[0].1[0][0].0 {
+            let verifier_zeta: Vec<Challenge> =
+                repeat_with(|| v_challenger.sample_algebra_element())
+                    .take(z.len())
+                    .collect();
+            assert_eq!(&verifier_zeta, z);
+        }
+        assert!(
+            <MyPcs as MlPcs<Challenge, Challenger>>::verify(
+                &p.0,
+                commits_and_claims,
+                &proof,
+                &mut v_challenger,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn negative_tampered_proof_rejected_eq_rotate_right() {
+        let p = get_pcs(1, 4, 4);
+        let (commits_and_claims, proof) = build_single_round_rotate(&p, 4, 1);
+
+        let commits = commits_and_claims
+            .iter()
+            .map(|(c, _)| c.clone())
+            .collect_vec();
+        let mut v_challenger = p.1.clone();
+        v_challenger.observe_slice(&commits);
+        if let MlQuery::EqRotateRight(z, _) = &commits_and_claims[0].1[0][0].0 {
+            let verifier_zeta: Vec<Challenge> =
+                repeat_with(|| v_challenger.sample_algebra_element())
+                    .take(z.len())
+                    .collect();
+            assert_eq!(&verifier_zeta, z);
+        }
+        <MyPcs as MlPcs<Challenge, Challenger>>::verify(
+            &p.0,
+            commits_and_claims.clone(),
+            &proof,
+            &mut v_challenger,
+        )
+        .unwrap();
+
+        let mut bad_proof = proof.clone();
+        if let Some(first) = bad_proof.first_mut() {
+            if let Some(val) = first.initial_ood_answers.first_mut() {
+                *val += Challenge::ONE;
+            } else if let Some(round) = first.rounds.first_mut() {
+                if let Some(val) = round.ood_answers.first_mut() {
+                    *val += Challenge::ONE;
+                } else {
+                    round.pow_witness += Val::ONE;
+                }
+            } else {
+                first.final_pow_witness += Val::ONE;
+            }
+        }
+
+        let mut bad_challenger = p.1.clone();
+        bad_challenger.observe_slice(&commits);
+        if let MlQuery::EqRotateRight(z, _) = &commits_and_claims[0].1[0][0].0 {
+            let verifier_zeta: Vec<Challenge> =
+                repeat_with(|| bad_challenger.sample_algebra_element())
+                    .take(z.len())
+                    .collect();
+            assert_eq!(&verifier_zeta, z);
+        }
+        assert!(
+            <MyPcs as MlPcs<Challenge, Challenger>>::verify(
+                &p.0,
+                commits_and_claims,
+                &bad_proof,
+                &mut bad_challenger,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn negative_tampered_claim_rejected_eq_rotate_right() {
+        let p = get_pcs(1, 4, 4);
+        let (mut commits_and_claims, proof) = build_single_round_rotate(&p, 4, 1);
+
+        let (_, claims) = &mut commits_and_claims[0];
+        claims[0][0].1[0] += Challenge::ONE;
+
+        let commits = commits_and_claims
+            .iter()
+            .map(|(c, _)| c.clone())
+            .collect_vec();
+        let mut v_challenger = p.1.clone();
+        v_challenger.observe_slice(&commits);
+        if let MlQuery::EqRotateRight(z, _) = &commits_and_claims[0].1[0][0].0 {
+            let verifier_zeta: Vec<Challenge> =
+                repeat_with(|| v_challenger.sample_algebra_element())
+                    .take(z.len())
+                    .collect();
+            assert_eq!(&verifier_zeta, z);
+        }
+        assert!(
+            <MyPcs as MlPcs<Challenge, Challenger>>::verify(
+                &p.0,
+                commits_and_claims,
+                &proof,
+                &mut v_challenger,
+            )
+            .is_err()
+        );
     }
 
     mod blowup_2 {

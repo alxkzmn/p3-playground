@@ -224,6 +224,9 @@ where
                     .take(concat_mats.meta.max_log_width())
                     .collect_vec();
 
+                let eq_rs = concat_mats
+                    .meta
+                    .eq_r_per_matrix::<Challenge>(&r);
                 let statement = info_span!("build EqStatement").in_scope(|| {
                     let mut statement = LinearEqStatement::initialize(num_variables);
                     queries_and_evals
@@ -231,14 +234,30 @@ where
                         .enumerate()
                         .for_each(|(idx, queries_and_evals)| {
                             queries_and_evals.iter().for_each(|(query, evals)| {
-                                let (constraint, sum) =
-                                    concat_mats.meta.constraint(idx, query, evals, &r);
+                                let (constraint, sum) = concat_mats.meta.constraint_with_eq_r(
+                                    idx,
+                                    query,
+                                    evals,
+                                    &r,
+                                    &eq_rs[idx],
+                                );
                                 match constraint {
                                     ConcatConstraint::Point(point) => {
                                         statement.add_evaluated_constraint(point, sum);
                                     }
-                                    ConcatConstraint::Linear(weights) => {
-                                        statement.add_linear_constraint(weights, sum);
+                                    ConcatConstraint::TensorProduct {
+                                        range_start,
+                                        log_range_len,
+                                        row_weights,
+                                        col_weights,
+                                    } => {
+                                        statement.add_tensor_product_constraint(
+                                            range_start,
+                                            log_range_len,
+                                            row_weights,
+                                            col_weights,
+                                            sum,
+                                        );
                                     }
                                 }
                             })
@@ -346,16 +365,29 @@ where
             let r = repeat_with(|| challenger.sample_algebra_element::<Challenge>())
                 .take(concat_mats_meta.max_log_width())
                 .collect_vec();
+            let eq_rs = concat_mats_meta.eq_r_per_matrix::<Challenge>(&r);
             let mut statement = LinearEqStatement::initialize(num_variables);
             round.iter().enumerate().for_each(|(idx, evals)| {
                 evals.iter().for_each(|(query, evals)| {
-                    let (constraint, sum) = concat_mats_meta.constraint(idx, query, evals, &r);
+                    let (constraint, sum) =
+                        concat_mats_meta.constraint_with_eq_r(idx, query, evals, &r, &eq_rs[idx]);
                     match constraint {
                         ConcatConstraint::Point(point) => {
                             statement.add_evaluated_constraint(point, sum);
                         }
-                        ConcatConstraint::Linear(weights) => {
-                            statement.add_linear_constraint(weights, sum);
+                        ConcatConstraint::TensorProduct {
+                            range_start,
+                            log_range_len,
+                            row_weights,
+                            col_weights,
+                        } => {
+                            statement.add_tensor_product_constraint(
+                                range_start,
+                                log_range_len,
+                                row_weights,
+                                col_weights,
+                                sum,
+                            );
                         }
                     }
                 })
@@ -491,6 +523,7 @@ where
                     .take(concat_mats.meta.max_log_width())
                     .collect_vec();
 
+                let eq_rs = concat_mats.meta.eq_r_per_matrix::<Challenge>(&r);
                 let statement = info_span!("build EqStatement").in_scope(|| {
                     let mut statement = LinearEqStatement::initialize(num_variables);
                     queries_and_evals
@@ -498,14 +531,30 @@ where
                         .enumerate()
                         .for_each(|(idx, queries_and_evals)| {
                             queries_and_evals.iter().for_each(|(query, evals)| {
-                                let (constraint, sum) =
-                                    concat_mats.meta.constraint(idx, query, evals, &r);
+                                let (constraint, sum) = concat_mats.meta.constraint_with_eq_r(
+                                    idx,
+                                    query,
+                                    evals,
+                                    &r,
+                                    &eq_rs[idx],
+                                );
                                 match constraint {
                                     ConcatConstraint::Point(point) => {
                                         statement.add_evaluated_constraint(point, sum);
                                     }
-                                    ConcatConstraint::Linear(weights) => {
-                                        statement.add_linear_constraint(weights, sum);
+                                    ConcatConstraint::TensorProduct {
+                                        range_start,
+                                        log_range_len,
+                                        row_weights,
+                                        col_weights,
+                                    } => {
+                                        statement.add_tensor_product_constraint(
+                                            range_start,
+                                            log_range_len,
+                                            row_weights,
+                                            col_weights,
+                                            sum,
+                                        );
                                     }
                                 }
                             })
@@ -584,16 +633,30 @@ where
             let r = repeat_with(|| challenger.sample_algebra_element::<Challenge>())
                 .take(concat_mats_meta.max_log_width())
                 .collect_vec();
+            let eq_rs = concat_mats_meta.eq_r_per_matrix::<Challenge>(&r);
             let mut statement = LinearEqStatement::initialize(num_variables);
             round.iter().enumerate().for_each(|(idx, evals)| {
                 evals.iter().for_each(|(query, ys)| {
-                    let (constraint, sum) = concat_mats_meta.constraint(idx, query, ys, &r);
+                    let (constraint, sum) =
+                        concat_mats_meta.constraint_with_eq_r(idx, query, ys, &r, &eq_rs[idx]);
                     match constraint {
                         ConcatConstraint::Point(point) => {
                             statement.add_evaluated_constraint(point, sum);
                         }
-                        ConcatConstraint::Linear(weights) => {
-                            statement.add_linear_constraint(weights, sum);
+
+                        ConcatConstraint::TensorProduct {
+                            range_start,
+                            log_range_len,
+                            row_weights,
+                            col_weights,
+                        } => {
+                            statement.add_tensor_product_constraint(
+                                range_start,
+                                log_range_len,
+                                row_weights,
+                                col_weights,
+                                sum,
+                            );
                         }
                     }
                 })
@@ -615,7 +678,12 @@ pub struct ConcatMatsMeta {
 
 pub(crate) enum ConcatConstraint<F> {
     Point(MultilinearPoint<F>),
-    Linear(EvaluationsList<F>),
+    TensorProduct {
+        range_start: usize,
+        log_range_len: usize,
+        row_weights: EvaluationsList<F>,
+        col_weights: EvaluationsList<F>,
+    },
 }
 
 impl ConcatMatsMeta {
@@ -658,17 +726,29 @@ impl ConcatMatsMeta {
             .unwrap_or_default()
     }
 
-    pub(crate) fn constraint<Challenge: Field>(
+    pub(crate) fn eq_r_per_matrix<Challenge: Field>(&self, r: &[Challenge]) -> Vec<Vec<Challenge>> {
+        self.dimensions
+            .iter()
+            .map(|dim| {
+                let log_width = log2_ceil_usize(dim.width);
+                eq_poly(&r[..log_width], Challenge::ONE)
+            })
+            .collect()
+    }
+
+    pub(crate) fn constraint_with_eq_r<Challenge: Field>(
         &self,
         idx: usize,
         query: &MlQuery<Challenge>,
         ys: &[Challenge],
         r: &[Challenge],
+        eq_r: &[Challenge],
     ) -> (ConcatConstraint<Challenge>, Challenge) {
         let log_width = log2_ceil_usize(self.dimensions[idx].width);
 
         let r = &r[..log_width];
-        let eq_r = eq_poly(r, Challenge::ONE);
+
+        debug_assert_eq!(eq_r.len(), 1 << log_width);
 
         let sum = dot_product(cloned(ys), cloned(&eq_r[..ys.len()]));
 
@@ -685,22 +765,20 @@ impl ConcatMatsMeta {
             }
             MlQuery::EqRotateRight(_, _) => {
                 // `EqRotateRight` represents a linear functional on the committed evaluations.
-                // We encode it as an explicit weight vector over the concatenated polynomial.
+                // We encode it as a tensor-product constraint over the matrix's range.
+                let row_weights = EvaluationsList::new(query.to_mle(Challenge::ONE));
+                let col_weights = EvaluationsList::new(eq_r.to_vec());
+                let log_range_len = log2_strict_usize(self.ranges[idx].len());
 
-                // For this matrix, the concatenated polynomial range is partitioned into rows,
-                // each row chunk having size `2^log_width`.
-                // We multiply each row-chunk's per-column eq weights (`eq_r`) by the rotated
-                // per-row eq weights (`query.to_mle(1)`), producing a full weight vector.
-                let mut weight = Challenge::zero_vec(1 << self.log_b);
-                weight[self.ranges[idx].clone()]
-                    .par_chunks_mut(eq_r.len())
-                    .zip_eq(query.to_mle(Challenge::ONE))
-                    .for_each(|(weight_row, query_w)| {
-                        izip!(weight_row.iter_mut(), &eq_r)
-                            .for_each(|(w, eqc)| *w = *eqc * query_w);
-                    });
-
-                (ConcatConstraint::Linear(EvaluationsList::new(weight)), sum)
+                (
+                    ConcatConstraint::TensorProduct {
+                        range_start: self.ranges[idx].start,
+                        log_range_len,
+                        row_weights,
+                        col_weights,
+                    },
+                    sum,
+                )
             }
         }
     }

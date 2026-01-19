@@ -61,3 +61,9 @@ name = "fractional_sum"
 
 harness = false
 required-features = ["bench"]
+
+[[bench]]
+name = "prove_verify"
+
+harness = false
+required-features = ["bench"]
