@@ -2,24 +2,23 @@ use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithPublicValues};
 use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
-use p3_field::BasedVectorSpace;
+use p3_field::{BasedVectorSpace, PrimeField32};
 use p3_hyperplonk::{HyperPlonkConfig, ProverInput, keygen, prove};
 use p3_keccak::Keccak256Hash;
 use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear};
 use p3_poseidon2_air::{RoundConstants, generate_trace_rows, num_cols};
+use p3_symmetric::CryptographicHasher;
 use p3_whir::{
     FoldingFactor, InitialPhaseConfig, KeccakNodeCompress, KeccakU32BeLeafHasher,
     ProtocolParameters, SecurityAssumption, WhirPcsKeccak, digest_u64_to_bytes32,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use whir_p3::whir::proof::WhirProof;
+use whir_p3::whir::proof::{QueryOpening, WhirProof};
 
 type Val = KoalaBear;
 type Challenge = BinomialExtensionField<Val, 4>;
 type LinearLayers = GenericPoseidon2LinearLayersKoalaBear;
-
-const DIGEST_BYTES: usize = 32;
 
 type FieldHash = KeccakU32BeLeafHasher;
 type Compress = KeccakNodeCompress;
@@ -166,19 +165,21 @@ fn main() {
             );
             println!("          \"queries\": [");
             for (qi, q) in round.queries.iter().enumerate() {
-                let (kind, payload, siblings) = if let Some(vals) = q.base_values() {
-                    let mut payload = Vec::<u8>::with_capacity(vals.len() * 4);
-                    for &v in vals {
-                        payload.extend_from_slice(&encode_val_u32_be(v));
+                let (kind, payload, siblings) = match q {
+                    QueryOpening::Base { values, proof } => {
+                        let mut payload = Vec::<u8>::with_capacity(values.len() * 4);
+                        for &v in values {
+                            payload.extend_from_slice(&encode_val_u32_be(v));
+                        }
+                        ("base", payload, proof.as_slice())
                     }
-                    ("base", payload, q.merkle_proof())
-                } else {
-                    let vals = q.extension_values().expect("extension opening");
-                    let mut payload = Vec::<u8>::with_capacity(vals.len() * 16);
-                    for &v in vals {
-                        payload.extend_from_slice(&encode_challenge_bytes(v));
+                    QueryOpening::Extension { values, proof } => {
+                        let mut payload = Vec::<u8>::with_capacity(values.len() * 16);
+                        for &v in values {
+                            payload.extend_from_slice(&encode_challenge_bytes(v));
+                        }
+                        ("extension", payload, proof.as_slice())
                     }
-                    ("extension", payload, q.merkle_proof())
                 };
 
                 let leaf = leaf_hash_from_bytes(&payload);
@@ -209,19 +210,21 @@ fn main() {
 
         println!("      \"final_queries\": [");
         for (qi, q) in pcs.final_queries.iter().enumerate() {
-            let (kind, payload, siblings) = if let Some(vals) = q.base_values() {
-                let mut payload = Vec::<u8>::with_capacity(vals.len() * 4);
-                for &v in vals {
-                    payload.extend_from_slice(&encode_val_u32_be(v));
+            let (kind, payload, siblings) = match q {
+                QueryOpening::Base { values, proof } => {
+                    let mut payload = Vec::<u8>::with_capacity(values.len() * 4);
+                    for &v in values {
+                        payload.extend_from_slice(&encode_val_u32_be(v));
+                    }
+                    ("base", payload, proof.as_slice())
                 }
-                ("base", payload, q.merkle_proof())
-            } else {
-                let vals = q.extension_values().expect("extension opening");
-                let mut payload = Vec::<u8>::with_capacity(vals.len() * 16);
-                for &v in vals {
-                    payload.extend_from_slice(&encode_challenge_bytes(v));
+                QueryOpening::Extension { values, proof } => {
+                    let mut payload = Vec::<u8>::with_capacity(values.len() * 16);
+                    for &v in values {
+                        payload.extend_from_slice(&encode_challenge_bytes(v));
+                    }
+                    ("extension", payload, proof.as_slice())
                 }
-                ("extension", payload, q.merkle_proof())
             };
 
             let leaf = leaf_hash_from_bytes(&payload);
@@ -233,7 +236,8 @@ fn main() {
             println!("          \"siblings\": [");
             for (si, sib) in siblings.iter().enumerate() {
                 let comma = if si + 1 == siblings.len() { "" } else { "," };
-                println!("            \"0x{}\"{}", hex32(sib), comma);
+                let sib_bytes = digest_u64_to_bytes32(sib);
+                println!("            \"0x{}\"{}", hex32(&sib_bytes), comma);
             }
             println!("          ]");
             let comma = if qi + 1 == pcs.final_queries.len() {

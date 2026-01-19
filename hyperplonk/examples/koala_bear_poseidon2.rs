@@ -1,14 +1,17 @@
 use std::time::Instant;
 
 use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithPublicValues};
-use p3_challenger::DuplexChallenger;
+use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
 use p3_hyperplonk::{HyperPlonkConfig, ProverInput, VerifierInput, keygen, prove, verify};
-use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear, Poseidon2KoalaBear};
+use p3_keccak::Keccak256Hash;
+use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear};
 use p3_poseidon2_air::{RoundConstants, generate_trace_rows, num_cols};
-use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
-use p3_whir::{FoldingFactor, InitialPhaseConfig, ProtocolParameters, SecurityAssumption, WhirPcs};
+use p3_whir::{
+    FoldingFactor, InitialPhaseConfig, KeccakNodeCompress, KeccakU32BeLeafHasher,
+    ProtocolParameters, SecurityAssumption, WhirPcsKeccak,
+};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use tracing_forest::ForestLayer;
@@ -22,13 +25,12 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 type Val = KoalaBear;
 type Challenge = BinomialExtensionField<Val, 4>;
 type LinearLayers = GenericPoseidon2LinearLayersKoalaBear;
-type Perm = Poseidon2KoalaBear<16>;
-const DIGEST_ELEMS: usize = 8;
-type FieldHash = PaddingFreeSponge<Perm, 16, 8, DIGEST_ELEMS>;
-type Compress = TruncatedPermutation<Perm, 2, DIGEST_ELEMS, 16>;
+
+type FieldHash = KeccakU32BeLeafHasher;
+type Compress = KeccakNodeCompress;
 type Dft<Val> = Radix2DitParallel<Val>;
-type Pcs<Val, Dft> = WhirPcs<Val, Dft, FieldHash, Compress, DIGEST_ELEMS>;
-type Challenger = DuplexChallenger<Val, Perm, 16, 8>;
+type Pcs<Val, Dft> = WhirPcsKeccak<Val, Dft, FieldHash, Compress>;
+type Challenger = SerializingChallenger32<Val, HashChallenger<u8, Keccak256Hash, 32>>;
 
 const WIDTH: usize = 16;
 const SBOX_DEGREE: u64 = 3;
@@ -48,48 +50,48 @@ pub struct Poseidon2Air(
     >,
 );
 
-impl<F> BaseAir<F> for &Poseidon2Air {
+impl BaseAir<Val> for Poseidon2Air {
     fn width(&self) -> usize {
         num_cols::<WIDTH, SBOX_DEGREE, SBOX_REGISTERS, HALF_FULL_ROUNDS, PARTIAL_ROUNDS>()
     }
 }
 
-impl<F> BaseAirWithPublicValues<F> for &Poseidon2Air {}
+impl BaseAirWithPublicValues<Val> for Poseidon2Air {}
 
-impl<AB: AirBuilder<F = Val>> Air<AB> for &Poseidon2Air {
-    #[inline]
+impl<AB: AirBuilder<F = Val>> Air<AB> for Poseidon2Air {
     fn eval(&self, builder: &mut AB) {
         self.0.eval(builder);
     }
 }
 
 fn main() {
-    let mut rng = StdRng::from_os_rng();
+    let mut rng = StdRng::seed_from_u64(0);
 
     let config = {
         let dft = Dft::default();
         // FIXME: Set to 128 when higher degree extension field is available.
         let security_level = 100;
         let pow_bits = 20;
-        let perm = Perm::new_from_rng_128(&mut rng);
-        let field_hash = FieldHash::new(perm.clone());
-        let compress = Compress::new(perm.clone());
         let whir_params = ProtocolParameters {
             initial_phase_config: InitialPhaseConfig::WithStatementClassic,
             security_level,
             pow_bits,
             folding_factor: FoldingFactor::Constant(4),
-            merkle_hash: field_hash,
-            merkle_compress: compress,
+            merkle_hash: FieldHash::default(),
+            merkle_compress: Compress::default(),
             soundness_type: SecurityAssumption::CapacityBound,
             starting_log_inv_rate: 1,
             rs_domain_initial_reduction_factor: 3,
         };
-        HyperPlonkConfig::<_, Challenge, _>::new(Pcs::new(dft, whir_params), Challenger::new(perm))
+        HyperPlonkConfig::<_, Challenge, _>::new(
+            Pcs::new(dft, whir_params),
+            Challenger::from_hasher(Vec::new(), Keccak256Hash),
+        )
     };
 
     let round_constants = RoundConstants::from_rng(&mut rng);
-    let air = &Poseidon2Air(p3_poseidon2_air::Poseidon2Air::new(round_constants.clone()));
+    let make_air = || Poseidon2Air(p3_poseidon2_air::Poseidon2Air::new(round_constants.clone()));
+    let air = make_air();
     let (vk, pk) = keygen([&air]);
 
     let log_b = 15;
@@ -107,9 +109,10 @@ fn main() {
         0,
     );
 
+    // Warmup (as in poseidon2 example).
     let start = Instant::now();
     while Instant::now().duration_since(start).as_secs() < 3 {
-        let prover_inputs = vec![ProverInput::new(air, Vec::new(), trace.clone())];
+        let prover_inputs = vec![ProverInput::new(make_air(), Vec::new(), trace.clone())];
         prove(&config, &pk, prover_inputs);
     }
 
@@ -121,9 +124,9 @@ fn main() {
         .with(ForestLayer::default())
         .init();
 
-    let prover_inputs = vec![ProverInput::new(air, Vec::new(), trace)];
+    let prover_inputs = vec![ProverInput::new(make_air(), Vec::new(), trace)];
     let proof = prove(&config, &pk, prover_inputs);
 
-    let verifier_inputs = vec![VerifierInput::new(air, Vec::new())];
+    let verifier_inputs = vec![VerifierInput::new(make_air(), Vec::new())];
     verify(&config, &vk, verifier_inputs, &proof).unwrap();
 }
