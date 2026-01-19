@@ -1,3 +1,4 @@
+use alloc::vec;
 use alloc::vec::Vec;
 
 use p3_field::{PackedValue, PrimeField32};
@@ -47,8 +48,7 @@ where
             }
             buf
         } else {
-            let mut buf = Vec::with_capacity(1);
-            buf.push(0x00);
+            let buf = vec![0x00];
             buf
         };
 

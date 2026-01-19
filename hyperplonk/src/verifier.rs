@@ -491,7 +491,6 @@ pub(crate) fn queries_and_evals<Challenge: Clone>(
                 &proof.regular.evals[idx]
             };
             let (local, next) = evals.split_at(meta.width);
-
             vec![
                 (MlQuery::Eq(z.to_vec()), local.to_vec()),
                 (MlQuery::EqRotateRight(z.to_vec(), 1), next.to_vec()),

@@ -370,7 +370,6 @@ where
                     statement,
                 )
                 .map(|_| ())
-                .map_err(Into::into)
         })
     }
 }
@@ -604,7 +603,6 @@ where
             Verifier::new(&config)
                 .verify::<Val, u64, u64, 4>(proof, challenger, &parsed_commitment, statement)
                 .map(|_| ())
-                .map_err(Into::into)
         })
     }
 }
