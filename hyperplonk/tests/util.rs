@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use p3_air::{Air, BaseAirWithPublicValues};
-use p3_challenger::DuplexChallenger;
+use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_dft::Radix2DitParallel;
 use p3_field::{ExtensionField, PrimeField32, TwoAdicField};
 use p3_hyperplonk::{
@@ -9,19 +9,19 @@ use p3_hyperplonk::{
     ProverInteractionFolderOnPacking, SymbolicAirBuilder, VerifierConstraintFolder, keygen, prove,
     verify,
 };
-use p3_koala_bear::{KoalaBear, Poseidon2KoalaBear};
-use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
-use p3_whir::{FoldingFactor, InitialPhaseConfig, ProtocolParameters, SecurityAssumption, WhirPcs};
-use rand::SeedableRng;
+use p3_keccak::Keccak256Hash;
+use p3_koala_bear::KoalaBear;
+use p3_whir::{
+    FoldingFactor, InitialPhaseConfig, KeccakNodeCompress, KeccakU32BeLeafHasher,
+    ProtocolParameters, SecurityAssumption, WhirPcsKeccak,
+};
 
-type Perm = Poseidon2KoalaBear<16>;
-const DIGEST_ELEMS: usize = 8;
-type FieldHash = PaddingFreeSponge<Perm, 16, 8, DIGEST_ELEMS>;
-type MyCompress = TruncatedPermutation<Perm, 2, DIGEST_ELEMS, 16>;
-type Dft = Radix2DitParallel<KoalaBear>;
-type Pcs = WhirPcs<KoalaBear, Dft, FieldHash, MyCompress, DIGEST_ELEMS>;
-type Challenger = DuplexChallenger<KoalaBear, Perm, 16, 8>;
 type Val = KoalaBear;
+type FieldHash = KeccakU32BeLeafHasher;
+type MyCompress = KeccakNodeCompress;
+type Dft<Val> = Radix2DitParallel<Val>;
+type Pcs<Val, Dft> = WhirPcsKeccak<Val, Dft, FieldHash, MyCompress>;
+type Challenger = SerializingChallenger32<Val, HashChallenger<u8, Keccak256Hash, 32>>;
 
 #[allow(clippy::multiple_bound_locations)]
 pub fn run<
@@ -47,10 +47,8 @@ pub fn run<
         let dft = Dft::default();
         let security_level = 60;
         let pow_bits = 0;
-        let mut rng = rand::rngs::SmallRng::seed_from_u64(0);
-        let perm = Perm::new_from_rng_128(&mut rng);
-        let field_hash = FieldHash::new(perm.clone());
-        let compress = MyCompress::new(perm.clone());
+        let field_hash = FieldHash::default();
+        let compress = MyCompress::default();
         let whir_params = ProtocolParameters {
             initial_phase_config: InitialPhaseConfig::WithStatementClassic,
             security_level,
@@ -62,7 +60,10 @@ pub fn run<
             starting_log_inv_rate: 1,
             rs_domain_initial_reduction_factor: 3,
         };
-        HyperPlonkConfig::new(Pcs::new(dft, whir_params), Challenger::new(perm))
+        HyperPlonkConfig::<_, Challenge, _>::new(
+            Pcs::new(dft, whir_params),
+            Challenger::from_hasher(Vec::new(), Keccak256Hash),
+        )
     };
 
     let verifier_inputs = prover_inputs

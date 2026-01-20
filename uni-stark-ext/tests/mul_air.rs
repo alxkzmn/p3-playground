@@ -222,7 +222,7 @@ fn do_test_bb_twoadic(log_blowup: usize, degree: u64, log_n: usize) -> Result<()
 
     type Challenger = DuplexChallenger<Val, Perm, 16, 8>;
 
-    let fri_params = FriParameters {
+    let fri_config = FriParameters {
         log_blowup,
         log_final_poly_len: 5,
         num_queries: 40,
@@ -231,7 +231,7 @@ fn do_test_bb_twoadic(log_blowup: usize, degree: u64, log_n: usize) -> Result<()
         mmcs: challenge_mmcs,
     };
     type Pcs = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>;
-    let pcs = Pcs::new(dft, val_mmcs, fri_params);
+    let pcs = Pcs::new(dft, val_mmcs, fri_config);
 
     type MyConfig = StarkConfig<Pcs, Challenge, Challenger>;
     let config = MyConfig::new(pcs, Challenger::new(perm));
@@ -284,7 +284,7 @@ fn do_test_m31_circle(log_blowup: usize, degree: u64, log_n: usize) -> Result<()
 
     type Challenger = SerializingChallenger32<Val, HashChallenger<u8, ByteHash, 32>>;
 
-    let fri_params = FriParameters {
+    let fri_config = FriParameters {
         log_blowup,
         log_final_poly_len: 0,
         num_queries: 40,
@@ -296,7 +296,7 @@ fn do_test_m31_circle(log_blowup: usize, degree: u64, log_n: usize) -> Result<()
     type Pcs = CirclePcs<Val, ValMmcs, ChallengeMmcs>;
     let pcs = Pcs {
         mmcs: val_mmcs,
-        fri_params,
+        fri_params: fri_config,
         _phantom: PhantomData,
     };
 

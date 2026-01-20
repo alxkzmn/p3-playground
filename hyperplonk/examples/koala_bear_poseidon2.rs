@@ -109,7 +109,6 @@ fn main() {
         0,
     );
 
-    // Warmup (as in poseidon2 example).
     let start = Instant::now();
     while Instant::now().duration_since(start).as_secs() < 3 {
         let prover_inputs = vec![ProverInput::new(make_air(), Vec::new(), trace.clone())];

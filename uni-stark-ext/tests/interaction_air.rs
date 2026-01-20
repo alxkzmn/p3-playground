@@ -131,8 +131,8 @@ fn do_test(sending_trace: RowMajorMatrix<Val>, receiving_trace: RowMajorMatrix<V
     let val_mmcs = ValMmcs::new(hash, compress);
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
     let dft = Dft::default();
-    let fri_params = create_test_fri_params(challenge_mmcs, 0);
-    let pcs = Pcs::new(dft, val_mmcs, fri_params);
+    let fri_config = create_test_fri_params(challenge_mmcs, 0);
+    let pcs = Pcs::new(dft, val_mmcs, fri_config);
     let challenger = Challenger::new(perm);
     let config = MyConfig::new(pcs, challenger);
 
