@@ -25,7 +25,7 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 type Val = KoalaBear;
 type Challenge = BinomialExtensionField<Val, 4>;
 type LinearLayers = GenericPoseidon2LinearLayersKoalaBear;
-
+type ByteHash = Keccak256Hash;
 type FieldHash = KeccakU32BeLeafHasher;
 type Compress = KeccakNodeCompress;
 type Dft<Val> = Radix2DitParallel<Val>;
@@ -72,13 +72,15 @@ fn main() {
         // FIXME: Set to 128 when higher degree extension field is available.
         let security_level = 100;
         let pow_bits = 20;
+        let field_hash = FieldHash::default();
+        let compress = Compress::default();
         let whir_params = ProtocolParameters {
             initial_phase_config: InitialPhaseConfig::WithStatementClassic,
             security_level,
             pow_bits,
             folding_factor: FoldingFactor::Constant(4),
-            merkle_hash: FieldHash::default(),
-            merkle_compress: Compress::default(),
+            merkle_hash: field_hash,
+            merkle_compress: compress,
             soundness_type: SecurityAssumption::CapacityBound,
             starting_log_inv_rate: 1,
             rs_domain_initial_reduction_factor: 3,
