@@ -208,36 +208,37 @@ macro_rules! make_tests_for_pcs {
 }
 
 mod koala_bear_whir_pcs {
-    use p3_challenger::DuplexChallenger;
-    use p3_koala_bear::Poseidon2KoalaBear;
-    use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
-    use p3_whir::{FoldingFactor, ProtocolParameters, SecurityAssumption, WhirPcs};
+    use p3_challenger::{HashChallenger, SerializingChallenger32};
+    use p3_keccak::Keccak256Hash;
+    use p3_whir::{
+        FoldingFactor, KeccakNodeCompress, KeccakU32BeLeafHasher, ProtocolParameters,
+        SecurityAssumption, WhirPcsKeccak,
+    };
     use whir_p3::whir::parameters::InitialPhaseConfig;
 
     use super::*;
 
     type Val = KoalaBear;
     type Challenge = BinomialExtensionField<Val, 4>;
-    type Perm = Poseidon2KoalaBear<16>;
-    const DIGEST_ELEMS: usize = 8;
-    type FieldHash = PaddingFreeSponge<Perm, 16, 8, DIGEST_ELEMS>;
-    type Compress = TruncatedPermutation<Perm, 2, DIGEST_ELEMS, 16>;
-    type Dft = Radix2DitParallel<Val>;
-    type Challenger = DuplexChallenger<Val, Perm, 16, 8>;
-    type MyPcs = WhirPcs<Val, Dft, FieldHash, Compress, DIGEST_ELEMS>;
+    type ByteHash = Keccak256Hash;
+    type FieldHash = KeccakU32BeLeafHasher;
+    type Compress = KeccakNodeCompress;
+
+    type Dft<Val> = Radix2DitParallel<Val>;
+    type Challenger = SerializingChallenger32<Val, HashChallenger<u8, ByteHash, 32>>;
+    type MyPcs<Val, Dft> = WhirPcsKeccak<Val, Dft, FieldHash, Compress>;
 
     fn get_pcs(
         log_blowup: usize,
         folding_factor: usize,
         first_round_folding_factor: usize,
-    ) -> (MyPcs, Challenger) {
+    ) -> (MyPcs<Val, Dft<Val>>, Challenger) {
         let dft = Dft::default();
         let security_level = 100;
         let pow_bits = 20;
-        let mut rng = seeded_rng();
-        let perm = Perm::new_from_rng_128(&mut rng);
-        let field_hash = FieldHash::new(perm.clone());
-        let compress = Compress::new(perm.clone());
+        let byte_hash = ByteHash {};
+        let field_hash = FieldHash::default();
+        let compress = Compress::default();
         let whir_params = ProtocolParameters {
             initial_phase_config: InitialPhaseConfig::WithStatementClassic,
             security_level,
@@ -252,7 +253,10 @@ mod koala_bear_whir_pcs {
             soundness_type: SecurityAssumption::CapacityBound,
             starting_log_inv_rate: log_blowup,
         };
-        (MyPcs::new(dft, whir_params), Challenger::new(perm))
+        (
+            MyPcs::new(dft, whir_params),
+            Challenger::from_hasher(Vec::new(), byte_hash),
+        )
     }
 
     mod blowup_1 {
