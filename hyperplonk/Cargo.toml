@@ -51,9 +51,6 @@ required-features = ["bench"]
 name = "koala_bear_poseidon2"
 
 [[example]]
-name = "koala_bear_poseidon2_poseidon2"
-
-[[example]]
 name = "evm_vectors"
 
 [[bench]]
