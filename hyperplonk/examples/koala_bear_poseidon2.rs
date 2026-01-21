@@ -28,7 +28,7 @@ type LinearLayers = GenericPoseidon2LinearLayersKoalaBear;
 type FieldHash = KeccakU32BeLeafHasher;
 type Compress = KeccakNodeCompress;
 type Dft<Val> = Radix2DitParallel<Val>;
-type Pcs<Val, Dft> = WhirPcs<Val, Dft, FieldHash, Compress>;
+type Pcs<Val, Dft> = WhirPcs<Val, Dft, FieldHash, Compress, 4>;
 type Challenger = SerializingChallenger32<Val, HashChallenger<u8, Keccak256Hash, 32>>;
 
 const WIDTH: usize = 16;

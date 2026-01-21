@@ -226,7 +226,7 @@ mod koala_bear_whir_pcs {
 
     type Dft<Val> = Radix2DitParallel<Val>;
     type Challenger = SerializingChallenger32<Val, HashChallenger<u8, ByteHash, 32>>;
-    type MyPcs<Val, Dft> = WhirPcs<Val, Dft, FieldHash, Compress>;
+    type MyPcs<Val, Dft> = WhirPcs<Val, Dft, FieldHash, Compress, 4>;
 
     fn get_pcs(
         log_blowup: usize,

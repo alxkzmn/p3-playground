@@ -37,19 +37,19 @@ use whir_p3::whir::verifier::errors::VerifierError;
 
 use crate::linear_constraints::LinearEqStatement;
 
-const KECCAK_DIGEST_ELEMS: usize = 4;
-
-type WhirMmcs<Val, Hash, Compression> =
-    MerkleTreeMmcs<Val, u64, Hash, Compression, KECCAK_DIGEST_ELEMS>;
+type WhirMmcs<Val, Hash, Compression, const DIGEST_ELEMS: usize> =
+    MerkleTreeMmcs<Val, u64, Hash, Compression, DIGEST_ELEMS>;
 
 #[derive(Debug)]
-pub struct WhirPcs<Val, Dft, Hash, Compression> {
+pub struct WhirPcs<Val, Dft, Hash, Compression, const DIGEST_ELEMS: usize> {
     dft: Dft,
     whir: whir_p3::parameters::ProtocolParameters<Hash, Compression>,
     _phantom: PhantomData<Val>,
 }
 
-impl<Val, Dft, Hash, Compression> WhirPcs<Val, Dft, Hash, Compression> {
+impl<Val, Dft, Hash, Compression, const DIGEST_ELEMS: usize>
+    WhirPcs<Val, Dft, Hash, Compression, DIGEST_ELEMS>
+{
     pub const fn new(
         dft: Dft,
         whir: whir_p3::parameters::ProtocolParameters<Hash, Compression>,
@@ -62,32 +62,36 @@ impl<Val, Dft, Hash, Compression> WhirPcs<Val, Dft, Hash, Compression> {
     }
 }
 
-impl<Val, Dft, Hash, Compression, Challenge, Challenger> MlPcs<Challenge, Challenger>
-    for WhirPcs<Val, Dft, Hash, Compression>
+impl<Val, Dft, Hash, Compression, Challenge, Challenger, const DIGEST_ELEMS: usize>
+    MlPcs<Challenge, Challenger> for WhirPcs<Val, Dft, Hash, Compression, DIGEST_ELEMS>
 where
     Val: TwoAdicField + PrimeField64 + Ord + Serialize + DeserializeOwned,
     Dft: TwoAdicSubgroupDft<Val>,
     Hash: Clone
         + Sync
-        + CryptographicHasher<Val, [u64; KECCAK_DIGEST_ELEMS]>
-        + CryptographicHasher<Val, [u64; KECCAK_DIGEST_ELEMS]>,
-    Compression: Clone + Sync + PseudoCompressionFunction<[u64; KECCAK_DIGEST_ELEMS], 2>,
+        + CryptographicHasher<Val, [u64; DIGEST_ELEMS]>
+        + CryptographicHasher<Val, [u64; DIGEST_ELEMS]>,
+    Compression: Clone + Sync + PseudoCompressionFunction<[u64; DIGEST_ELEMS], 2>,
     Challenge: TwoAdicField + ExtensionField<Val> + Serialize + DeserializeOwned,
     Challenger: FieldChallenger<Val>
         + GrindingChallenger<Witness = Val>
-        + CanObserve<SymHash<Val, u64, KECCAK_DIGEST_ELEMS>>,
-    [u64; KECCAK_DIGEST_ELEMS]: Serialize + DeserializeOwned,
+        + CanObserve<SymHash<Val, u64, DIGEST_ELEMS>>,
+    [u64; DIGEST_ELEMS]: Serialize + DeserializeOwned,
 {
     type Val = Val;
-    type Commitment = <WhirMmcs<Val, Hash, Compression> as Mmcs<Val>>::Commitment;
+    type Commitment = <WhirMmcs<Val, Hash, Compression, DIGEST_ELEMS> as Mmcs<Val>>::Commitment;
     type ProverData = (
         ConcatMats<Val>,
         RefCell<
-            Option<<WhirMmcs<Val, Hash, Compression> as Mmcs<Val>>::ProverData<DenseMatrix<Val>>>,
+            Option<
+                <WhirMmcs<Val, Hash, Compression, DIGEST_ELEMS> as Mmcs<Val>>::ProverData<
+                    DenseMatrix<Val>,
+                >,
+            >,
         >,
     );
     type Evaluations<'a> = HorizontallyTruncated<Val, RowMajorMatrixView<'a, Val>>;
-    type Proof = Vec<WhirProof<Val, Challenge, u64, KECCAK_DIGEST_ELEMS>>;
+    type Proof = Vec<WhirProof<Val, Challenge, u64, DIGEST_ELEMS>>;
     type Error = VerifierError;
 
     fn commit(
@@ -118,7 +122,7 @@ where
             self.dft.dft_batch(mat).to_row_major_matrix()
         });
 
-        let mmcs = WhirMmcs::<Val, Hash, Compression>::new(
+        let mmcs = WhirMmcs::<Val, Hash, Compression, DIGEST_ELEMS>::new(
             self.whir.merkle_hash.clone(),
             self.whir.merkle_compress.clone(),
         );
@@ -164,13 +168,13 @@ where
                 // Fix the Fiat-Shamir transcript pattern for this proof.
                 let mut domainsep: DomainSeparator<Challenge, Val> =
                     DomainSeparator::new(Vec::new());
-                domainsep.commit_statement::<_, _, _, KECCAK_DIGEST_ELEMS>(&config);
-                domainsep.add_whir_proof::<_, _, _, KECCAK_DIGEST_ELEMS>(&config);
+                domainsep.commit_statement::<_, _, _, DIGEST_ELEMS>(&config);
+                domainsep.add_whir_proof::<_, _, _, DIGEST_ELEMS>(&config);
                 domainsep.observe_domain_separator(challenger);
 
                 // Prepare proof container and witness pieces.
                 let mut proof =
-                    WhirProof::<Val, Challenge, u64, KECCAK_DIGEST_ELEMS>::from_protocol_parameters(
+                    WhirProof::<Val, Challenge, u64, DIGEST_ELEMS>::from_protocol_parameters(
                         &self.whir,
                         num_variables,
                     );
@@ -201,20 +205,19 @@ where
                 let statement = info_span!("build EqStatement")
                     .in_scope(|| concat_mats.meta.build_statement(queries_and_evals, &r));
 
-                let witness =
-                    Witness::<Challenge, Val, DenseMatrix<Val>, u64, KECCAK_DIGEST_ELEMS> {
-                    polynomial,
-                    prover_data: Arc::new(merkle_tree.take().unwrap()),
-                    ood_statement: ood_statement.into_eq_statement(),
-                };
+                info_span!("prove").in_scope(|| {
+                    let witness = Witness::<Challenge, Val, DenseMatrix<Val>, u64, DIGEST_ELEMS> {
+                        polynomial,
+                        prover_data: Arc::new(merkle_tree.take().unwrap()),
+                        ood_statement: ood_statement.into_eq_statement(),
+                    };
 
-                info_span!("whir_p3::prove").in_scope(|| {
                     let statement = statement.into_eq_statement();
                     Prover(&config)
-                        .prove::<_, Val, u64, u64, KECCAK_DIGEST_ELEMS>(
+                        .prove::<_, Val, u64, u64, DIGEST_ELEMS>(
                             &self.dft, &mut proof, challenger, statement, witness,
                         )
-                        .expect("WHIR proving failed");
+                        .unwrap();
                 });
 
                 proof
@@ -260,13 +263,13 @@ where
 
             // Fix the Fiat-Shamir transcript pattern for this proof.
             let mut domainsep: DomainSeparator<Challenge, Val> = DomainSeparator::new(Vec::new());
-            domainsep.commit_statement::<_, _, _, KECCAK_DIGEST_ELEMS>(&config);
-            domainsep.add_whir_proof::<_, _, _, KECCAK_DIGEST_ELEMS>(&config);
+            domainsep.commit_statement::<_, _, _, DIGEST_ELEMS>(&config);
+            domainsep.add_whir_proof::<_, _, _, DIGEST_ELEMS>(&config);
             domainsep.observe_domain_separator(challenger);
 
             // Parse commitment root + OOD statement from transcript (matches prover observation order).
             let parsed_commitment = CommitmentReader::new(&config)
-                .parse_commitment::<u64, KECCAK_DIGEST_ELEMS>(proof, challenger);
+                .parse_commitment::<u64, DIGEST_ELEMS>(proof, challenger);
             debug_assert_eq!(parsed_commitment.root, commitment);
 
             // Sample the same column-combination randomness and rebuild the same statement.
@@ -278,7 +281,7 @@ where
                 .into_eq_statement();
 
             Verifier::new(&config)
-                .verify::<Val, u64, u64, KECCAK_DIGEST_ELEMS>(
+                .verify::<Val, u64, u64, DIGEST_ELEMS>(
                     proof,
                     challenger,
                     &parsed_commitment,

@@ -20,7 +20,7 @@ type Val = KoalaBear;
 type FieldHash = KeccakU32BeLeafHasher;
 type MyCompress = KeccakNodeCompress;
 type Dft<Val> = Radix2DitParallel<Val>;
-type Pcs<Val, Dft> = WhirPcs<Val, Dft, FieldHash, MyCompress>;
+type Pcs<Val, Dft> = WhirPcs<Val, Dft, FieldHash, MyCompress, 4>;
 type Challenger = SerializingChallenger32<Val, HashChallenger<u8, Keccak256Hash, 32>>;
 
 #[allow(clippy::multiple_bound_locations)]
