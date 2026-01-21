@@ -224,7 +224,6 @@ mod koala_bear_whir_pcs {
     type FieldHash = KeccakU32BeLeafHasher;
     type Compress = KeccakNodeCompress;
     type Dft<Val> = Radix2DitParallel<Val>;
-
     type Challenger = SerializingChallenger32<Val, HashChallenger<u8, ByteHash, 32>>;
     type MyPcs<Val, Dft> = WhirPcs<Val, Dft, FieldHash, Compress, 4>;
 
