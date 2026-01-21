@@ -289,18 +289,18 @@ where
 }
 
 pub struct ConcatMatsMeta {
-    pub(crate) log_b: usize,
+    log_b: usize,
     dimensions: Vec<Dimensions>,
     ranges: Vec<Range<usize>>,
 }
 
-pub(crate) enum ConcatConstraint<F> {
+enum ConcatConstraint<F> {
     Point(MultilinearPoint<F>),
     Linear(LinearConstraint<F>),
 }
 
 impl ConcatMatsMeta {
-    pub(crate) fn new(dims: Vec<Dimensions>) -> Self {
+    fn new(dims: Vec<Dimensions>) -> Self {
         let (dimensions, ranges) = dims
             .iter()
             .enumerate()
@@ -331,7 +331,7 @@ impl ConcatMatsMeta {
         }
     }
 
-    pub(crate) fn max_log_width(&self) -> usize {
+    fn max_log_width(&self) -> usize {
         self.dimensions
             .iter()
             .map(|dim| log2_ceil_usize(dim.width))
@@ -339,7 +339,7 @@ impl ConcatMatsMeta {
             .unwrap_or_default()
     }
 
-    pub(crate) fn constraint<Challenge: Field>(
+    fn constraint<Challenge: Field>(
         &self,
         idx: usize,
         query: &MlQuery<Challenge>,
@@ -381,7 +381,7 @@ impl ConcatMatsMeta {
         }
     }
 
-    pub(crate) fn build_statement<Challenge: Field>(
+    fn build_statement<Challenge: Field>(
         &self,
         queries_and_evals: &[Vec<(MlQuery<Challenge>, Vec<Challenge>)>],
         r: &[Challenge],
@@ -424,12 +424,12 @@ impl ConcatMatsMeta {
 }
 
 pub struct ConcatMats<Val> {
-    pub(crate) values: Vec<Val>,
-    pub(crate) meta: ConcatMatsMeta,
+    values: Vec<Val>,
+    meta: ConcatMatsMeta,
 }
 
 impl<Val: Field> ConcatMats<Val> {
-    pub(crate) fn new(mats: Vec<RowMajorMatrix<Val>>) -> Self {
+    fn new(mats: Vec<RowMajorMatrix<Val>>) -> Self {
         let meta = ConcatMatsMeta::new(mats.iter().map(Matrix::dimensions).collect());
         let mut values = Val::zero_vec(1 << meta.log_b);
         izip!(&meta.ranges, mats).for_each(|(range, mat)| {
@@ -442,10 +442,7 @@ impl<Val: Field> ConcatMats<Val> {
         Self { values, meta }
     }
 
-    pub(crate) fn mat(
-        &self,
-        idx: usize,
-    ) -> HorizontallyTruncated<Val, RowMajorMatrixView<'_, Val>> {
+    fn mat(&self, idx: usize) -> HorizontallyTruncated<Val, RowMajorMatrixView<'_, Val>> {
         HorizontallyTruncated::new(
             RowMajorMatrixView::new(
                 &self.values[self.meta.ranges[idx].clone()],
