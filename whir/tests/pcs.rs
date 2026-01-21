@@ -212,7 +212,7 @@ mod koala_bear_whir_pcs {
     use p3_keccak::Keccak256Hash;
     use p3_whir::{
         FoldingFactor, KeccakNodeCompress, KeccakU32BeLeafHasher, ProtocolParameters,
-        SecurityAssumption, WhirPcsKeccak,
+        SecurityAssumption, WhirPcs,
     };
     use whir_p3::whir::parameters::InitialPhaseConfig;
 
@@ -226,7 +226,7 @@ mod koala_bear_whir_pcs {
 
     type Dft<Val> = Radix2DitParallel<Val>;
     type Challenger = SerializingChallenger32<Val, HashChallenger<u8, ByteHash, 32>>;
-    type MyPcs<Val, Dft> = WhirPcsKeccak<Val, Dft, FieldHash, Compress>;
+    type MyPcs<Val, Dft> = WhirPcs<Val, Dft, FieldHash, Compress>;
 
     fn get_pcs(
         log_blowup: usize,

@@ -13,14 +13,14 @@ use p3_keccak::Keccak256Hash;
 use p3_koala_bear::KoalaBear;
 use p3_whir::{
     FoldingFactor, InitialPhaseConfig, KeccakNodeCompress, KeccakU32BeLeafHasher,
-    ProtocolParameters, SecurityAssumption, WhirPcsKeccak,
+    ProtocolParameters, SecurityAssumption, WhirPcs,
 };
 
 type Val = KoalaBear;
 type FieldHash = KeccakU32BeLeafHasher;
 type MyCompress = KeccakNodeCompress;
 type Dft<Val> = Radix2DitParallel<Val>;
-type Pcs<Val, Dft> = WhirPcsKeccak<Val, Dft, FieldHash, MyCompress>;
+type Pcs<Val, Dft> = WhirPcs<Val, Dft, FieldHash, MyCompress>;
 type Challenger = SerializingChallenger32<Val, HashChallenger<u8, Keccak256Hash, 32>>;
 
 #[allow(clippy::multiple_bound_locations)]

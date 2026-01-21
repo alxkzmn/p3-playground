@@ -10,7 +10,7 @@ use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear};
 use p3_poseidon2_air::{RoundConstants, generate_trace_rows, num_cols};
 use p3_whir::{
     FoldingFactor, InitialPhaseConfig, KeccakNodeCompress, KeccakU32BeLeafHasher,
-    ProtocolParameters, SecurityAssumption, WhirPcsKeccak,
+    ProtocolParameters, SecurityAssumption, WhirPcs,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -28,7 +28,7 @@ type LinearLayers = GenericPoseidon2LinearLayersKoalaBear;
 type FieldHash = KeccakU32BeLeafHasher;
 type Compress = KeccakNodeCompress;
 type Dft<Val> = Radix2DitParallel<Val>;
-type Pcs<Val, Dft> = WhirPcsKeccak<Val, Dft, FieldHash, Compress>;
+type Pcs<Val, Dft> = WhirPcs<Val, Dft, FieldHash, Compress>;
 type Challenger = SerializingChallenger32<Val, HashChallenger<u8, Keccak256Hash, 32>>;
 
 const WIDTH: usize = 16;
