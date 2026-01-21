@@ -58,3 +58,9 @@ name = "fractional_sum"
 
 harness = false
 required-features = ["bench"]
+
+[[bench]]
+name = "poseidon2_koala_bear"
+
+harness = false
+required-features = ["bench"]
