@@ -28,44 +28,28 @@ use whir_p3::poly::evals::EvaluationsList;
 use whir_p3::poly::multilinear::MultilinearPoint;
 use whir_p3::whir::committer::Witness;
 use whir_p3::whir::committer::reader::CommitmentReader;
+use whir_p3::whir::constraints::statement::eq::LinearConstraint;
 use whir_p3::whir::parameters::WhirConfig;
-use whir_p3::whir::proof::{InitialPhase, SumcheckData, WhirProof};
+use whir_p3::whir::proof::WhirProof;
 use whir_p3::whir::prover::Prover;
 use whir_p3::whir::verifier::Verifier;
 use whir_p3::whir::verifier::errors::VerifierError;
 
 use crate::linear_constraints::LinearEqStatement;
 
-type WhirMmcs<Val, Hash, Compression, const DIGEST_ELEMS: usize> = MerkleTreeMmcs<
-    <Val as Field>::Packing,
-    <Val as Field>::Packing,
-    Hash,
-    Compression,
-    DIGEST_ELEMS,
->;
+const KECCAK_DIGEST_ELEMS: usize = 4;
 
-type WhirMmcsKeccak<Val, Hash, Compression> = MerkleTreeMmcs<Val, u64, Hash, Compression, 4>;
-
-/// Marker type selecting the default (field-hash) Merkle commitment flavor.
-#[derive(Debug, Clone, Copy)]
-pub struct FieldHashFlavor;
-
-/// Marker type selecting the Keccak bytes32 Merkle commitment flavor.
-#[derive(Debug, Clone, Copy)]
-pub struct KeccakFlavor;
+type WhirMmcs<Val, Hash, Compression> =
+    MerkleTreeMmcs<Val, u64, Hash, Compression, KECCAK_DIGEST_ELEMS>;
 
 #[derive(Debug)]
-pub struct WhirPcs<Val, Dft, Hash, Compression, const DIGEST_ELEMS: usize, Flavor = FieldHashFlavor>
-{
+pub struct WhirPcs<Val, Dft, Hash, Compression> {
     dft: Dft,
     whir: whir_p3::parameters::ProtocolParameters<Hash, Compression>,
-    _flavor: PhantomData<Flavor>,
     _phantom: PhantomData<Val>,
 }
 
-impl<Val, Dft, Hash, Compression, const DIGEST_ELEMS: usize, Flavor>
-    WhirPcs<Val, Dft, Hash, Compression, DIGEST_ELEMS, Flavor>
-{
+impl<Val, Dft, Hash, Compression> WhirPcs<Val, Dft, Hash, Compression> {
     pub const fn new(
         dft: Dft,
         whir: whir_p3::parameters::ProtocolParameters<Hash, Compression>,
@@ -73,47 +57,37 @@ impl<Val, Dft, Hash, Compression, const DIGEST_ELEMS: usize, Flavor>
         Self {
             dft,
             whir,
-            _flavor: PhantomData,
             _phantom: PhantomData,
         }
     }
 }
 
-impl<Val, Dft, Hash, Compression, Challenge, Challenger, const DIGEST_ELEMS: usize>
-    MlPcs<Challenge, Challenger>
-    for WhirPcs<Val, Dft, Hash, Compression, DIGEST_ELEMS, FieldHashFlavor>
+impl<Val, Dft, Hash, Compression, Challenge, Challenger> MlPcs<Challenge, Challenger>
+    for WhirPcs<Val, Dft, Hash, Compression>
 where
     Val: TwoAdicField + PrimeField64 + Ord + Serialize + DeserializeOwned,
-    <Val as Field>::Packing: Eq,
     Dft: TwoAdicSubgroupDft<Val>,
     Hash: Clone
         + Sync
-        + CryptographicHasher<Val, [Val; DIGEST_ELEMS]>
-        + CryptographicHasher<Val::Packing, [Val::Packing; DIGEST_ELEMS]>,
-    Compression: Clone
-        + Sync
-        + PseudoCompressionFunction<[Val; DIGEST_ELEMS], 2>
-        + PseudoCompressionFunction<[Val::Packing; DIGEST_ELEMS], 2>,
+        + CryptographicHasher<Val, [u64; KECCAK_DIGEST_ELEMS]>
+        + CryptographicHasher<Val, [u64; KECCAK_DIGEST_ELEMS]>,
+    Compression: Clone + Sync + PseudoCompressionFunction<[u64; KECCAK_DIGEST_ELEMS], 2>,
     Challenge: TwoAdicField + ExtensionField<Val> + Serialize + DeserializeOwned,
     Challenger: FieldChallenger<Val>
         + GrindingChallenger<Witness = Val>
-        + CanObserve<SymHash<Val, Val, DIGEST_ELEMS>>,
-    [Val; DIGEST_ELEMS]: Serialize + DeserializeOwned,
+        + CanObserve<SymHash<Val, u64, KECCAK_DIGEST_ELEMS>>,
+    [u64; KECCAK_DIGEST_ELEMS]: Serialize + DeserializeOwned,
 {
     type Val = Val;
-    type Commitment = <WhirMmcs<Val, Hash, Compression, DIGEST_ELEMS> as Mmcs<Val>>::Commitment;
+    type Commitment = <WhirMmcs<Val, Hash, Compression> as Mmcs<Val>>::Commitment;
     type ProverData = (
         ConcatMats<Val>,
         RefCell<
-            Option<
-                <WhirMmcs<Val, Hash, Compression, DIGEST_ELEMS> as Mmcs<Val>>::ProverData<
-                    DenseMatrix<Val>,
-                >,
-            >,
+            Option<<WhirMmcs<Val, Hash, Compression> as Mmcs<Val>>::ProverData<DenseMatrix<Val>>>,
         >,
     );
     type Evaluations<'a> = HorizontallyTruncated<Val, RowMajorMatrixView<'a, Val>>;
-    type Proof = Vec<WhirProof<Val, Challenge, Val, DIGEST_ELEMS>>;
+    type Proof = Vec<WhirProof<Val, Challenge, u64, KECCAK_DIGEST_ELEMS>>;
     type Error = VerifierError;
 
     fn commit(
@@ -144,7 +118,7 @@ where
             self.dft.dft_batch(mat).to_row_major_matrix()
         });
 
-        let mmcs = WhirMmcs::<Val, Hash, Compression, DIGEST_ELEMS>::new(
+        let mmcs = WhirMmcs::<Val, Hash, Compression>::new(
             self.whir.merkle_hash.clone(),
             self.whir.merkle_compress.clone(),
         );
@@ -190,16 +164,16 @@ where
                 // Fix the Fiat-Shamir transcript pattern for this proof.
                 let mut domainsep: DomainSeparator<Challenge, Val> =
                     DomainSeparator::new(Vec::new());
-                domainsep.commit_statement::<_, _, _, DIGEST_ELEMS>(&config);
-                domainsep.add_whir_proof::<_, _, _, DIGEST_ELEMS>(&config);
+                domainsep.commit_statement::<_, _, _, KECCAK_DIGEST_ELEMS>(&config);
+                domainsep.add_whir_proof::<_, _, _, KECCAK_DIGEST_ELEMS>(&config);
                 domainsep.observe_domain_separator(challenger);
 
                 // Prepare proof container and witness pieces.
                 let mut proof =
-                    WhirProof::<Val, Challenge, Val, DIGEST_ELEMS>::from_protocol_parameters(
-                    &self.whir,
-                    num_variables,
-                );
+                    WhirProof::<Val, Challenge, u64, KECCAK_DIGEST_ELEMS>::from_protocol_parameters(
+                        &self.whir,
+                        num_variables,
+                    );
 
                 let polynomial = EvaluationsList::new(concat_mats.values.clone());
 
@@ -224,49 +198,11 @@ where
                     .take(concat_mats.meta.max_log_width())
                     .collect_vec();
 
-                let statement = info_span!("build EqStatement").in_scope(|| {
-                    let mut statement = LinearEqStatement::initialize(num_variables);
-                    queries_and_evals
-                        .iter()
-                        .enumerate()
-                        .for_each(|(idx, queries_and_evals)| {
-                            queries_and_evals.iter().for_each(|(query, evals)| {
-                                let (constraint, sum) =
-                                    concat_mats.meta.constraint(idx, query, evals, &r);
-                                match constraint {
-                                    ConcatConstraint::Point(point) => {
-                                        statement.add_evaluated_constraint(point, sum);
-                                    }
-                                    ConcatConstraint::Linear(weights) => {
-                                        statement.add_linear_constraint(weights, sum);
-                                    }
-                                }
-                            })
-                        });
-                    statement
-                });
+                let statement = info_span!("build EqStatement")
+                    .in_scope(|| concat_mats.meta.build_statement(queries_and_evals, &r));
 
-                // NOTE: Explicit linear functionals (e.g. `EqRotateRight`) are currently not
-                // compatible with the optimized initial phases (univariate-skip, SVO).
-                // If we produced any linear constraints, force the classic `WithStatement` path.
-                if statement.has_linear_constraints() {
-                    match proof.initial_phase {
-                        InitialPhase::WithStatementSkip(_)
-                        | InitialPhase::WithStatementSvo { .. } => {
-                            proof.initial_phase = InitialPhase::WithStatement {
-                                sumcheck: SumcheckData::default(),
-                            };
-                        }
-                        InitialPhase::WithStatement { .. }
-                        | InitialPhase::WithoutStatement { .. } => {}
-                    }
-                }
-                debug_assert!(matches!(
-                    proof.initial_phase,
-                    InitialPhase::WithStatement { .. }
-                ));
-
-                let witness = Witness {
+                let witness =
+                    Witness::<Challenge, Val, DenseMatrix<Val>, u64, KECCAK_DIGEST_ELEMS> {
                     polynomial,
                     prover_data: Arc::new(merkle_tree.take().unwrap()),
                     ood_statement: ood_statement.into_eq_statement(),
@@ -275,20 +211,11 @@ where
                 info_span!("whir_p3::prove").in_scope(|| {
                     let statement = statement.into_eq_statement();
                     Prover(&config)
-                        .prove::<_, <Val as Field>::Packing, Val, <Val as Field>::Packing, DIGEST_ELEMS>(
-                            &self.dft,
-                            &mut proof,
-                            challenger,
-                            statement,
-                            witness,
+                        .prove::<_, Val, u64, u64, KECCAK_DIGEST_ELEMS>(
+                            &self.dft, &mut proof, challenger, statement, witness,
                         )
                         .expect("WHIR proving failed");
                 });
-
-                debug_assert!(matches!(
-                    proof.initial_phase,
-                    InitialPhase::WithStatement { .. }
-                ));
 
                 proof
             })
@@ -333,275 +260,30 @@ where
 
             // Fix the Fiat-Shamir transcript pattern for this proof.
             let mut domainsep: DomainSeparator<Challenge, Val> = DomainSeparator::new(Vec::new());
-            domainsep.commit_statement::<_, _, _, DIGEST_ELEMS>(&config);
-            domainsep.add_whir_proof::<_, _, _, DIGEST_ELEMS>(&config);
+            domainsep.commit_statement::<_, _, _, KECCAK_DIGEST_ELEMS>(&config);
+            domainsep.add_whir_proof::<_, _, _, KECCAK_DIGEST_ELEMS>(&config);
             domainsep.observe_domain_separator(challenger);
 
             // Parse commitment root + OOD statement from transcript (matches prover observation order).
             let parsed_commitment = CommitmentReader::new(&config)
-                .parse_commitment::<Val, DIGEST_ELEMS>(proof, challenger);
+                .parse_commitment::<u64, KECCAK_DIGEST_ELEMS>(proof, challenger);
             debug_assert_eq!(parsed_commitment.root, commitment);
 
             // Sample the same column-combination randomness and rebuild the same statement.
             let r = repeat_with(|| challenger.sample_algebra_element::<Challenge>())
                 .take(concat_mats_meta.max_log_width())
                 .collect_vec();
-            let mut statement = LinearEqStatement::initialize(num_variables);
-            round.iter().enumerate().for_each(|(idx, evals)| {
-                evals.iter().for_each(|(query, evals)| {
-                    let (constraint, sum) = concat_mats_meta.constraint(idx, query, evals, &r);
-                    match constraint {
-                        ConcatConstraint::Point(point) => {
-                            statement.add_evaluated_constraint(point, sum);
-                        }
-                        ConcatConstraint::Linear(weights) => {
-                            statement.add_linear_constraint(weights, sum);
-                        }
-                    }
-                })
-            });
-            let statement = statement.into_eq_statement();
+            let statement = info_span!("build EqStatement")
+                .in_scope(|| concat_mats_meta.build_statement(&round, &r))
+                .into_eq_statement();
 
             Verifier::new(&config)
-                .verify::<<Val as Field>::Packing, Val, <Val as Field>::Packing, DIGEST_ELEMS>(
+                .verify::<Val, u64, u64, KECCAK_DIGEST_ELEMS>(
                     proof,
                     challenger,
                     &parsed_commitment,
                     statement,
                 )
-                .map(|_| ())
-        })
-    }
-}
-
-impl<Val, Dft, Hash, Compression, Challenge, Challenger> MlPcs<Challenge, Challenger>
-    for WhirPcs<Val, Dft, Hash, Compression, 4, KeccakFlavor>
-where
-    Val: TwoAdicField + PrimeField64 + Ord + Serialize + DeserializeOwned,
-    Dft: TwoAdicSubgroupDft<Val>,
-    Hash: Clone + Sync + CryptographicHasher<Val, [u64; 4]> + CryptographicHasher<Val, [u64; 4]>,
-    Compression: Clone + Sync + PseudoCompressionFunction<[u64; 4], 2>,
-    Challenge: TwoAdicField + ExtensionField<Val> + Serialize + DeserializeOwned,
-    Challenger:
-        FieldChallenger<Val> + GrindingChallenger<Witness = Val> + CanObserve<SymHash<Val, u64, 4>>,
-    [u64; 4]: Serialize + DeserializeOwned,
-{
-    type Val = Val;
-    type Commitment = <WhirMmcsKeccak<Val, Hash, Compression> as Mmcs<Val>>::Commitment;
-    type ProverData = (
-        ConcatMats<Val>,
-        RefCell<
-            Option<
-                <WhirMmcsKeccak<Val, Hash, Compression> as Mmcs<Val>>::ProverData<DenseMatrix<Val>>,
-            >,
-        >,
-    );
-    type Evaluations<'a> = HorizontallyTruncated<Val, RowMajorMatrixView<'a, Val>>;
-    type Proof = Vec<WhirProof<Val, Challenge, u64, 4>>;
-    type Error = VerifierError;
-
-    fn commit(
-        &self,
-        evaluations: Vec<RowMajorMatrix<Self::Val>>,
-    ) -> (Self::Commitment, Self::ProverData) {
-        let concat_mats = info_span!("concat matrices").in_scope(|| ConcatMats::new(evaluations));
-        let num_variables = concat_mats.meta.log_b;
-
-        let config = WhirConfig::<Challenge, Val, Hash, Compression, Challenger>::new(
-            num_variables,
-            self.whir.clone(),
-        );
-
-        let folded_matrix = info_span!("commit: transpose/pad + dft").in_scope(|| {
-            let mut mat = RowMajorMatrixView::new(
-                &concat_mats.values,
-                1 << (num_variables - config.folding_factor.at_round(0)),
-            )
-            .transpose();
-
-            mat.pad_to_height(
-                1 << (num_variables + config.starting_log_inv_rate
-                    - config.folding_factor.at_round(0)),
-                Val::ZERO,
-            );
-            self.dft.dft_batch(mat).to_row_major_matrix()
-        });
-
-        let mmcs = WhirMmcsKeccak::<Val, Hash, Compression>::new(
-            self.whir.merkle_hash.clone(),
-            self.whir.merkle_compress.clone(),
-        );
-        let (commitment, merkle_tree) = mmcs.commit_matrix(folded_matrix);
-        (commitment, (concat_mats, RefCell::new(Some(merkle_tree))))
-    }
-
-    fn get_evaluations<'a>(
-        &self,
-        (concat_mats, _): &'a Self::ProverData,
-        idx: usize,
-    ) -> Self::Evaluations<'a> {
-        concat_mats.mat(idx)
-    }
-
-    fn open(
-        &self,
-        rounds: Vec<(
-            &Self::ProverData,
-            Vec<Vec<(MlQuery<Challenge>, Vec<Challenge>)>>,
-        )>,
-        challenger: &mut Challenger,
-    ) -> Self::Proof {
-        rounds
-            .iter()
-            .map(|((concat_mats, merkle_tree), queries_and_evals)| {
-                let num_variables = concat_mats.meta.log_b;
-                let config = WhirConfig::<Challenge, Val, Hash, Compression, Challenger>::new(
-                    num_variables,
-                    self.whir.clone(),
-                );
-
-                let mut domainsep: DomainSeparator<Challenge, Val> =
-                    DomainSeparator::new(Vec::new());
-                domainsep.commit_statement::<_, _, _, 4>(&config);
-                domainsep.add_whir_proof::<_, _, _, 4>(&config);
-                domainsep.observe_domain_separator(challenger);
-
-                let mut proof = WhirProof::<Val, Challenge, u64, 4>::from_protocol_parameters(
-                    &self.whir,
-                    num_variables,
-                );
-
-                let polynomial = EvaluationsList::new(concat_mats.values.clone());
-
-                let root = merkle_tree.borrow().as_ref().unwrap().root();
-                proof.initial_commitment = *root.as_ref();
-                challenger.observe(root);
-
-                let mut ood_statement = LinearEqStatement::initialize(num_variables);
-                (0..config.commitment_ood_samples).for_each(|_| {
-                    let u: Challenge = challenger.sample_algebra_element();
-                    let point = MultilinearPoint::expand_from_univariate(u, num_variables);
-                    let eval = polynomial.evaluate_hypercube_base::<Challenge>(&point);
-                    proof.initial_ood_answers.push(eval);
-                    challenger.observe_algebra_element(eval);
-                    ood_statement.add_evaluated_constraint(point, eval);
-                });
-
-                let r = repeat_with(|| challenger.sample_algebra_element::<Challenge>())
-                    .take(concat_mats.meta.max_log_width())
-                    .collect_vec();
-
-                let statement = info_span!("build EqStatement").in_scope(|| {
-                    let mut statement = LinearEqStatement::initialize(num_variables);
-                    queries_and_evals
-                        .iter()
-                        .enumerate()
-                        .for_each(|(idx, queries_and_evals)| {
-                            queries_and_evals.iter().for_each(|(query, evals)| {
-                                let (constraint, sum) =
-                                    concat_mats.meta.constraint(idx, query, evals, &r);
-                                match constraint {
-                                    ConcatConstraint::Point(point) => {
-                                        statement.add_evaluated_constraint(point, sum);
-                                    }
-                                    ConcatConstraint::Linear(weights) => {
-                                        statement.add_linear_constraint(weights, sum);
-                                    }
-                                }
-                            })
-                        });
-                    statement
-                });
-
-                if statement.has_linear_constraints() {
-                    match proof.initial_phase {
-                        InitialPhase::WithStatementSkip(_)
-                        | InitialPhase::WithStatementSvo { .. } => {
-                            proof.initial_phase = InitialPhase::WithStatement {
-                                sumcheck: SumcheckData::default(),
-                            };
-                        }
-                        InitialPhase::WithStatement { .. }
-                        | InitialPhase::WithoutStatement { .. } => {}
-                    }
-                }
-
-                let witness = Witness::<Challenge, Val, DenseMatrix<Val>, u64, 4> {
-                    polynomial,
-                    prover_data: Arc::new(merkle_tree.take().unwrap()),
-                    ood_statement: ood_statement.into_eq_statement(),
-                };
-
-                info_span!("whir_p3::prove").in_scope(|| {
-                    let statement = statement.into_eq_statement();
-                    Prover(&config)
-                        .prove::<_, Val, u64, u64, 4>(
-                            &self.dft, &mut proof, challenger, statement, witness,
-                        )
-                        .expect("WHIR proving failed");
-                });
-
-                proof
-            })
-            .collect()
-    }
-
-    fn verify(
-        &self,
-        rounds: Vec<(
-            Self::Commitment,
-            Vec<Vec<(MlQuery<Challenge>, Vec<Challenge>)>>,
-        )>,
-        proofs: &Self::Proof,
-        challenger: &mut Challenger,
-    ) -> Result<(), Self::Error> {
-        izip!(rounds, proofs).try_for_each(|((commitment, round), proof)| {
-            let concat_mats_meta = ConcatMatsMeta::new(
-                round
-                    .iter()
-                    .map(|mat| Dimensions {
-                        width: mat[0].1.len(),
-                        height: 1 << mat[0].0.log_b(),
-                    })
-                    .collect(),
-            );
-            let num_variables = concat_mats_meta.log_b;
-
-            let config = WhirConfig::<Challenge, Val, Hash, Compression, Challenger>::new(
-                num_variables,
-                self.whir.clone(),
-            );
-
-            let mut domainsep: DomainSeparator<Challenge, Val> = DomainSeparator::new(Vec::new());
-            domainsep.commit_statement::<_, _, _, 4>(&config);
-            domainsep.add_whir_proof::<_, _, _, 4>(&config);
-            domainsep.observe_domain_separator(challenger);
-
-            let parsed_commitment =
-                CommitmentReader::new(&config).parse_commitment::<u64, 4>(proof, challenger);
-            debug_assert_eq!(parsed_commitment.root, commitment);
-
-            let r = repeat_with(|| challenger.sample_algebra_element::<Challenge>())
-                .take(concat_mats_meta.max_log_width())
-                .collect_vec();
-            let mut statement = LinearEqStatement::initialize(num_variables);
-            round.iter().enumerate().for_each(|(idx, evals)| {
-                evals.iter().for_each(|(query, ys)| {
-                    let (constraint, sum) = concat_mats_meta.constraint(idx, query, ys, &r);
-                    match constraint {
-                        ConcatConstraint::Point(point) => {
-                            statement.add_evaluated_constraint(point, sum);
-                        }
-                        ConcatConstraint::Linear(weights) => {
-                            statement.add_linear_constraint(weights, sum);
-                        }
-                    }
-                })
-            });
-            let statement = statement.into_eq_statement();
-
-            Verifier::new(&config)
-                .verify::<Val, u64, u64, 4>(proof, challenger, &parsed_commitment, statement)
                 .map(|_| ())
         })
     }
@@ -615,7 +297,7 @@ pub struct ConcatMatsMeta {
 
 pub(crate) enum ConcatConstraint<F> {
     Point(MultilinearPoint<F>),
-    Linear(EvaluationsList<F>),
+    Linear(LinearConstraint<F>),
 }
 
 impl ConcatMatsMeta {
@@ -684,25 +366,61 @@ impl ConcatMatsMeta {
                 (ConcatConstraint::Point(MultilinearPoint::new(point)), sum)
             }
             MlQuery::EqRotateRight(_, _) => {
-                // `EqRotateRight` represents a linear functional on the committed evaluations.
-                // We encode it as an explicit weight vector over the concatenated polynomial.
-
-                // For this matrix, the concatenated polynomial range is partitioned into rows,
-                // each row chunk having size `2^log_width`.
-                // We multiply each row-chunk's per-column eq weights (`eq_r`) by the rotated
-                // per-row eq weights (`query.to_mle(1)`), producing a full weight vector.
-                let mut weight = Challenge::zero_vec(1 << self.log_b);
-                weight[self.ranges[idx].clone()]
-                    .par_chunks_mut(eq_r.len())
-                    .zip_eq(query.to_mle(Challenge::ONE))
-                    .for_each(|(weight_row, query_w)| {
-                        izip!(weight_row.iter_mut(), &eq_r)
-                            .for_each(|(w, eqc)| *w = *eqc * query_w);
-                    });
-
-                (ConcatConstraint::Linear(EvaluationsList::new(weight)), sum)
+                let row_weights = EvaluationsList::new(query.to_mle(Challenge::ONE));
+                let col_weights = EvaluationsList::new(eq_r);
+                let log_range_len = log2_strict_usize(self.ranges[idx].len());
+                (
+                    ConcatConstraint::Linear(LinearConstraint::TensorProduct {
+                        range_start: self.ranges[idx].start,
+                        log_range_len,
+                        row_weights,
+                        col_weights,
+                    }),
+                    sum,
+                )
             }
         }
+    }
+
+    pub(crate) fn build_statement<Challenge: Field>(
+        &self,
+        queries_and_evals: &[Vec<(MlQuery<Challenge>, Vec<Challenge>)>],
+        r: &[Challenge],
+    ) -> LinearEqStatement<Challenge> {
+        let mut statement = LinearEqStatement::initialize(self.log_b);
+        queries_and_evals
+            .iter()
+            .enumerate()
+            .for_each(|(idx, queries_and_evals)| {
+                queries_and_evals.iter().for_each(|(query, evals)| {
+                    let (constraint, sum) = self.constraint(idx, query, evals, r);
+                    match constraint {
+                        ConcatConstraint::Point(point) => {
+                            statement.add_evaluated_constraint(point, sum);
+                        }
+                        ConcatConstraint::Linear(weights) => match weights {
+                            LinearConstraint::Dense(weights) => {
+                                statement.add_linear_constraint(weights, sum);
+                            }
+                            LinearConstraint::TensorProduct {
+                                range_start,
+                                log_range_len,
+                                row_weights,
+                                col_weights,
+                            } => {
+                                statement.add_tensor_product_constraint(
+                                    range_start,
+                                    log_range_len,
+                                    row_weights,
+                                    col_weights,
+                                    sum,
+                                );
+                            }
+                        },
+                    }
+                })
+            });
+        statement
     }
 }
 

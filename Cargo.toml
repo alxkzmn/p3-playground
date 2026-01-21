@@ -8,6 +8,9 @@ members = [
     "uni-stark-ext",
     "whir",
 ]
+exclude = [
+    "whir-p3",
+]
 resolver = "2"
 
 [workspace.package]
@@ -24,7 +27,7 @@ serde = "1.0.218"
 tracing = "0.1.41"
 tracing-forest = "0.1.6"
 tracing-subscriber = { version = "0.3.17", default-features = false, features = ["alloc"] }
-whir-p3 = { git = "http://github.com/alxkzmn/whir-p3", rev = "c9390bb" }
+whir-p3 = { git = "http://github.com/alxkzmn/whir-p3", rev = "3ebff92" }
 
 p3-air = { git = "https://github.com/Plonky3/Plonky3" }
 p3-baby-bear = { git = "https://github.com/Plonky3/Plonky3" }

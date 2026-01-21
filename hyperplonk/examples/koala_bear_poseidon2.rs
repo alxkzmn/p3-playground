@@ -25,7 +25,6 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 type Val = KoalaBear;
 type Challenge = BinomialExtensionField<Val, 4>;
 type LinearLayers = GenericPoseidon2LinearLayersKoalaBear;
-type ByteHash = Keccak256Hash;
 type FieldHash = KeccakU32BeLeafHasher;
 type Compress = KeccakNodeCompress;
 type Dft<Val> = Radix2DitParallel<Val>;
