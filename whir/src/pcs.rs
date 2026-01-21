@@ -24,6 +24,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tracing::info_span;
 use whir_p3::fiat_shamir::domain_separator::DomainSeparator;
+use whir_p3::parameters::ProtocolParameters;
 use whir_p3::poly::evals::EvaluationsList;
 use whir_p3::poly::multilinear::MultilinearPoint;
 use whir_p3::whir::committer::Witness;
@@ -37,23 +38,17 @@ use whir_p3::whir::verifier::errors::VerifierError;
 
 use crate::linear_constraints::LinearEqStatement;
 
-type WhirMmcs<Val, Hash, Compression, const DIGEST_ELEMS: usize> =
-    MerkleTreeMmcs<Val, u64, Hash, Compression, DIGEST_ELEMS>;
-
 #[derive(Debug)]
 pub struct WhirPcs<Val, Dft, Hash, Compression, const DIGEST_ELEMS: usize> {
     dft: Dft,
-    whir: whir_p3::parameters::ProtocolParameters<Hash, Compression>,
+    whir: ProtocolParameters<Hash, Compression>,
     _phantom: PhantomData<Val>,
 }
 
 impl<Val, Dft, Hash, Compression, const DIGEST_ELEMS: usize>
     WhirPcs<Val, Dft, Hash, Compression, DIGEST_ELEMS>
 {
-    pub const fn new(
-        dft: Dft,
-        whir: whir_p3::parameters::ProtocolParameters<Hash, Compression>,
-    ) -> Self {
+    pub const fn new(dft: Dft, whir: ProtocolParameters<Hash, Compression>) -> Self {
         Self {
             dft,
             whir,
@@ -79,12 +74,13 @@ where
     [u64; DIGEST_ELEMS]: Serialize + DeserializeOwned,
 {
     type Val = Val;
-    type Commitment = <WhirMmcs<Val, Hash, Compression, DIGEST_ELEMS> as Mmcs<Val>>::Commitment;
+    type Commitment =
+        <MerkleTreeMmcs<Val, u64, Hash, Compression, DIGEST_ELEMS> as Mmcs<Val>>::Commitment;
     type ProverData = (
         ConcatMats<Val>,
         RefCell<
             Option<
-                <WhirMmcs<Val, Hash, Compression, DIGEST_ELEMS> as Mmcs<Val>>::ProverData<
+                <MerkleTreeMmcs<Val, u64, Hash, Compression, DIGEST_ELEMS> as Mmcs<Val>>::ProverData<
                     DenseMatrix<Val>,
                 >,
             >,
@@ -122,7 +118,7 @@ where
             self.dft.dft_batch(mat).to_row_major_matrix()
         });
 
-        let mmcs = WhirMmcs::<Val, Hash, Compression, DIGEST_ELEMS>::new(
+        let mmcs = MerkleTreeMmcs::new(
             self.whir.merkle_hash.clone(),
             self.whir.merkle_compress.clone(),
         );
