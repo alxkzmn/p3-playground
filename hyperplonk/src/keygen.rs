@@ -5,11 +5,12 @@ use core::ops::Deref;
 use itertools::{Itertools, chain};
 use p3_air::{Air, BaseAirWithPublicValues};
 use p3_field::Field;
+use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 use crate::{Interaction, SymbolicAirBuilder, SymbolicExpression};
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AirMeta {
     pub width: usize,
     pub public_value_count: usize,
@@ -23,11 +24,12 @@ pub struct AirMeta {
     pub max_field_count: usize,
 }
 
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct VerifyingKey {
     pub(crate) metas: Vec<AirMeta>,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ProvingKey {
     vk: VerifyingKey,
 }
