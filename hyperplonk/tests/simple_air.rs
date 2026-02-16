@@ -10,7 +10,7 @@ use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::StdRng;
-use rand::{Rng, RngCore, SeedableRng};
+use rand::{RngExt, SeedableRng, rng};
 use util::run;
 
 mod util;
@@ -65,7 +65,7 @@ impl MyAir {
     fn generate_trace_rows<F: Field>(
         &self,
         log_b: usize,
-        mut rng: impl RngCore,
+        mut rng: impl RngExt,
     ) -> (RowMajorMatrix<F>, F)
     where
         StandardUniform: Distribution<F>,
@@ -93,7 +93,8 @@ impl MyAir {
 
 #[test]
 fn single_sum() {
-    let mut rng = StdRng::from_os_rng();
+    let mut os_rng = rng();
+    let mut rng = StdRng::from_rng(&mut os_rng);
     for (log_b, width) in (4..12).cartesian_product(1..5) {
         let air = MyAir::GrandSum { width };
         let (trace, output) = air.generate_trace_rows(log_b, &mut rng);
@@ -104,7 +105,8 @@ fn single_sum() {
 
 #[test]
 fn single_product() {
-    let mut rng = StdRng::from_os_rng();
+    let mut os_rng = rng();
+    let mut rng = StdRng::from_rng(&mut os_rng);
     for (log_b, width) in (4..12).cartesian_product(1..5) {
         let air = MyAir::GrandProduct { width };
         let (trace, output) = air.generate_trace_rows(log_b, &mut rng);
@@ -115,7 +117,8 @@ fn single_product() {
 
 #[test]
 fn multiple_mixed() {
-    let mut rng = StdRng::from_os_rng();
+    let mut os_rng = rng();
+    let mut rng = StdRng::from_rng(&mut os_rng);
     for _ in 0..100 {
         let n = rng.random_range(1..10);
         run::<Challenge, _>(

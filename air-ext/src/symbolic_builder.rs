@@ -2,7 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use itertools::{Itertools, chain};
-use p3_air::{AirBuilder, AirBuilderWithPublicValues, PairBuilder};
+use p3_air::{AirBuilder, AirBuilderWithPublicValues};
 use p3_field::Field;
 use p3_matrix::dense::RowMajorMatrix;
 
@@ -14,7 +14,6 @@ use crate::{Entry, Interaction, InteractionBuilder, InteractionType};
 #[derive(Debug)]
 pub struct SymbolicAirBuilder<F: Field> {
     is_transition_degree: usize,
-    preprocessed: RowMajorMatrix<SymbolicVariable<F>>,
     main: RowMajorMatrix<SymbolicVariable<F>>,
     public_values: Vec<SymbolicVariable<F>>,
     constraints: Vec<SymbolicExpression<F>>,
@@ -22,19 +21,7 @@ pub struct SymbolicAirBuilder<F: Field> {
 }
 
 impl<F: Field> SymbolicAirBuilder<F> {
-    pub fn new(
-        is_transition_degree: usize,
-        preprocessed_width: usize,
-        width: usize,
-        num_public_values: usize,
-    ) -> Self {
-        let prep_values = [0, 1]
-            .into_iter()
-            .flat_map(|offset| {
-                (0..preprocessed_width)
-                    .map(move |index| SymbolicVariable::new(Entry::Preprocessed { offset }, index))
-            })
-            .collect();
+    pub fn new(is_transition_degree: usize, width: usize, num_public_values: usize) -> Self {
         let main_values = [0, 1]
             .into_iter()
             .flat_map(|offset| {
@@ -46,7 +33,6 @@ impl<F: Field> SymbolicAirBuilder<F> {
             .collect();
         Self {
             is_transition_degree,
-            preprocessed: RowMajorMatrix::new(prep_values, preprocessed_width),
             main: RowMajorMatrix::new(main_values, width),
             public_values,
             constraints: vec![],
@@ -101,12 +87,6 @@ impl<F: Field> AirBuilderWithPublicValues for SymbolicAirBuilder<F> {
     type PublicVar = SymbolicVariable<F>;
     fn public_values(&self) -> &[Self::PublicVar] {
         &self.public_values
-    }
-}
-
-impl<F: Field> PairBuilder for SymbolicAirBuilder<F> {
-    fn preprocessed(&self) -> Self::M {
-        self.preprocessed.clone()
     }
 }
 

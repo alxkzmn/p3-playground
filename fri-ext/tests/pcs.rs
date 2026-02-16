@@ -4,16 +4,15 @@ use p3_challenger::{CanObserve, DuplexChallenger, FieldChallenger};
 use p3_commit::{ExtensionMmcs, Pcs, PolynomialSpace};
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
-use p3_field::{ExtensionField, Field};
+use p3_field::{ExtensionField, Field, PrimeCharacteristicRing};
 use p3_fri_ext::{FriConfig, TwoAdicFriPcs};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
-use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
-fn seeded_rng() -> impl Rng {
+fn seeded_rng() -> StdRng {
     StdRng::seed_from_u64(0)
 }
 
@@ -23,8 +22,7 @@ fn do_test_fri_pcs<Val, Challenge, Challenger, P>(
 ) where
     P: Pcs<Challenge, Challenger>,
     P::Domain: PolynomialSpace<Val = Val>,
-    Val: Field,
-    StandardUniform: Distribution<Val>,
+    Val: Field + PrimeCharacteristicRing,
     Challenge: ExtensionField<Val>,
     Challenger: Clone + CanObserve<P::Commitment> + FieldChallenger<Val>,
 {
@@ -42,9 +40,12 @@ fn do_test_fri_pcs<Val, Challenge, Challenger, P>(
                     let d = 1 << log_degree;
                     // random width 5-15
                     let width = 5 + rng.random_range(0..=10);
+                    let values = (0..(d * width))
+                        .map(|index| Val::from_u64(rng.random::<u64>() ^ index as u64))
+                        .collect();
                     (
                         pcs.natural_domain_for_degree(d),
-                        RowMajorMatrix::<Val>::rand(&mut rng, d, width),
+                        RowMajorMatrix::<Val>::new(values, width),
                     )
                 })
                 .collect_vec()
@@ -169,7 +170,8 @@ mod babybear_fri_pcs {
     type MyPcs = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>;
 
     fn get_pcs(log_blowup: usize, arity_bits: usize) -> (MyPcs, Challenger) {
-        let perm = Perm::new_from_rng_128(&mut seeded_rng());
+        let mut rng = seeded_rng();
+        let perm = Perm::new_from_rng_128(&mut rng);
         let hash = MyHash::new(perm.clone());
         let compress = MyCompress::new(perm.clone());
 

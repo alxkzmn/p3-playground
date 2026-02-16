@@ -9,11 +9,11 @@ use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear};
 use p3_poseidon2_air::{RoundConstants, generate_trace_rows, num_cols};
 use p3_symmetric::CryptographicHasher;
 use p3_whir::{
-    FoldingFactor, InitialPhaseConfig, KeccakNodeCompress, KeccakU32BeLeafHasher,
-    ProtocolParameters, SecurityAssumption, WhirPcs, digest_u64_to_bytes32,
+    FoldingFactor, KeccakNodeCompress, KeccakU32BeLeafHasher, ProtocolParameters,
+    SecurityAssumption, WhirPcs, digest_u64_to_bytes32,
 };
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use whir_p3::whir::proof::{QueryOpening, WhirProof};
 
 type Val = KoalaBear;
@@ -98,7 +98,6 @@ fn main() {
         let security_level = 100;
         let pow_bits = 20;
         let whir_params = ProtocolParameters {
-            initial_phase_config: InitialPhaseConfig::WithStatementClassic,
             security_level,
             pow_bits,
             folding_factor: FoldingFactor::Constant(4),

@@ -167,7 +167,6 @@ where
             .map(|(domain, evals)| {
                 assert_eq!(domain.size(), evals.height());
                 let shift = Val::GENERATOR / domain.shift();
-                // Commit to the bit-reversed LDE.
                 self.dft
                     .coset_lde_batch(evals, self.fri.log_blowup, shift)
                     .bit_reverse_rows()
@@ -175,6 +174,28 @@ where
             })
             .collect();
 
+        self.mmcs.commit(ldes)
+    }
+
+    fn get_quotient_ldes(
+        &self,
+        evaluations: impl IntoIterator<Item = (Self::Domain, RowMajorMatrix<Val>)>,
+        _num_chunks: usize,
+    ) -> Vec<RowMajorMatrix<Val>> {
+        evaluations
+            .into_iter()
+            .map(|(domain, evals)| {
+                assert_eq!(domain.size(), evals.height());
+                let shift = Val::GENERATOR / domain.shift();
+                self.dft
+                    .coset_lde_batch(evals, self.fri.log_blowup, shift)
+                    .bit_reverse_rows()
+                    .to_row_major_matrix()
+            })
+            .collect()
+    }
+
+    fn commit_ldes(&self, ldes: Vec<RowMajorMatrix<Val>>) -> (Self::Commitment, Self::ProverData) {
         self.mmcs.commit(ldes)
     }
 

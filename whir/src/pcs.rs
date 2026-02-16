@@ -1,4 +1,3 @@
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::cmp::Reverse;
@@ -27,9 +26,9 @@ use whir_p3::fiat_shamir::domain_separator::DomainSeparator;
 use whir_p3::parameters::ProtocolParameters;
 use whir_p3::poly::evals::EvaluationsList;
 use whir_p3::poly::multilinear::MultilinearPoint;
-use whir_p3::whir::committer::Witness;
 use whir_p3::whir::committer::reader::CommitmentReader;
 use whir_p3::whir::constraints::statement::eq::LinearConstraint;
+use whir_p3::whir::constraints::statement::initial::InitialStatement;
 use whir_p3::whir::parameters::WhirConfig;
 use whir_p3::whir::proof::WhirProof;
 use whir_p3::whir::prover::Prover;
@@ -202,16 +201,18 @@ where
                     .in_scope(|| concat_mats.meta.build_statement(queries_and_evals, &r));
 
                 info_span!("prove").in_scope(|| {
-                    let witness = Witness::<Challenge, Val, DenseMatrix<Val>, u64, DIGEST_ELEMS> {
-                        polynomial,
-                        prover_data: Arc::new(merkle_tree.take().unwrap()),
-                        ood_statement: ood_statement.into_eq_statement(),
-                    };
+                    let mut statement = statement.into_eq_statement();
+                    statement.concatenate(&ood_statement.into_eq_statement());
+                    let initial_statement =
+                        InitialStatement::from_eq_statement(polynomial, statement);
 
-                    let statement = statement.into_eq_statement();
                     Prover(&config)
                         .prove::<_, Val, u64, u64, DIGEST_ELEMS>(
-                            &self.dft, &mut proof, challenger, statement, witness,
+                            &self.dft,
+                            &mut proof,
+                            challenger,
+                            &initial_statement,
+                            merkle_tree.take().unwrap(),
                         )
                         .unwrap();
                 });

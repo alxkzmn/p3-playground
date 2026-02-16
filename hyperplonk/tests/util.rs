@@ -12,8 +12,8 @@ use p3_hyperplonk::{
 use p3_keccak::Keccak256Hash;
 use p3_koala_bear::KoalaBear;
 use p3_whir::{
-    FoldingFactor, InitialPhaseConfig, KeccakNodeCompress, KeccakU32BeLeafHasher,
-    ProtocolParameters, SecurityAssumption, WhirPcs,
+    FoldingFactor, KeccakNodeCompress, KeccakU32BeLeafHasher, ProtocolParameters,
+    SecurityAssumption, WhirPcs,
 };
 
 type Val = KoalaBear;
@@ -50,7 +50,6 @@ pub fn run<
         let field_hash = FieldHash::default();
         let compress = MyCompress::default();
         let whir_params = ProtocolParameters {
-            initial_phase_config: InitialPhaseConfig::WithStatementClassic,
             security_level,
             pow_bits,
             folding_factor: FoldingFactor::Constant(4),

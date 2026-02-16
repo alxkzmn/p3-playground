@@ -12,7 +12,7 @@ use p3_koala_bear::KoalaBear;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng, rng};
 
 #[cfg(target_family = "unix")]
 #[global_allocator]
@@ -52,7 +52,8 @@ fn bench(c: &mut Criterion) {
     let mut group = c.benchmark_group(format!("fractional_sum/n={INTERACTION_COUNT}"));
     group.sample_size(10);
 
-    let mut rng = StdRng::from_os_rng();
+    let mut os_rng = rng();
+    let mut rng = StdRng::from_rng(&mut os_rng);
 
     let air = InteractionAir;
     let (_, pk) = keygen::<Val, _>([&air]);

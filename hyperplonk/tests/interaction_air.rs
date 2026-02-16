@@ -10,7 +10,7 @@ use p3_koala_bear::KoalaBear;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng, rng};
 use util::run;
 
 mod util;
@@ -116,7 +116,11 @@ impl SendingAir {
         ]
     }
 
-    fn generate_sending_trace<F: Field>(&self, n: usize, mut rng: impl Rng) -> RowMajorMatrix<F> {
+    fn generate_sending_trace<F: Field>(
+        &self,
+        n: usize,
+        mut rng: impl RngExt,
+    ) -> RowMajorMatrix<F> {
         let mut trace = RowMajorMatrix::new(
             F::zero_vec(n * BaseAir::<F>::width(self)),
             BaseAir::<F>::width(self),
@@ -163,7 +167,8 @@ impl SendingAir {
 
 #[test]
 fn interaction() {
-    let mut rng = StdRng::from_os_rng();
+    let mut os_rng = rng();
+    let mut rng = StdRng::from_rng(&mut os_rng);
     for ((log_b, constraint_degree), interaction_degree) in
         (0..12).cartesian_product(0..4).cartesian_product(0..4)
     {
