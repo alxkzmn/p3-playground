@@ -10,6 +10,8 @@ use p3_whir::{
     FoldingFactor, KeccakNodeCompress, KeccakU32BeLeafHasher, ProtocolParameters,
     SecurityAssumption, WhirPcs,
 };
+use whir_p3::poly::evals::EvaluationsList;
+use whir_p3::whir::proof::SumcheckData;
 
 #[path = "../src/evm_codec.rs"]
 mod evm_codec;
@@ -230,4 +232,86 @@ fn tampering_representative_fields_breaks_verification() {
             }
         }
     }
+}
+
+#[test]
+fn option_roundtrip_stability_for_present_and_absent_sections_hyperplonk() {
+    let fixture = build_fixture();
+    let baseline_blob = encode_proof_blob_v1(&fixture.public_inputs, &fixture.proof);
+
+    let mut with_options = decode_proof_blob_v1(&baseline_blob).expect("baseline decode failed");
+    for pcs in &mut with_options.proof.pcs {
+        pcs.final_poly = Some(EvaluationsList::new(vec![Challenge::ZERO, Challenge::ONE]));
+        pcs.final_sumcheck = Some(SumcheckData {
+            polynomial_evaluations: vec![[Challenge::ZERO, Challenge::ONE]],
+            pow_witnesses: vec![Val::ZERO],
+        });
+    }
+
+    let with_options_blob = encode_proof_blob_v1(&with_options.public_inputs, &with_options.proof);
+    let with_options_decoded =
+        decode_proof_blob_v1(&with_options_blob).expect("decode with options failed");
+    assert!(
+        with_options_decoded
+            .proof
+            .pcs
+            .iter()
+            .all(|pcs| pcs.final_poly.is_some())
+    );
+    assert!(
+        with_options_decoded
+            .proof
+            .pcs
+            .iter()
+            .all(|pcs| pcs.final_sumcheck.is_some())
+    );
+    let with_options_reencoded = encode_proof_blob_v1(
+        &with_options_decoded.public_inputs,
+        &with_options_decoded.proof,
+    );
+    assert_eq!(with_options_reencoded, with_options_blob);
+
+    let mut without_options =
+        decode_proof_blob_v1(&baseline_blob).expect("baseline decode for none failed");
+    for pcs in &mut without_options.proof.pcs {
+        pcs.final_poly = None;
+        pcs.final_sumcheck = None;
+    }
+
+    let without_options_blob =
+        encode_proof_blob_v1(&without_options.public_inputs, &without_options.proof);
+    let without_options_decoded =
+        decode_proof_blob_v1(&without_options_blob).expect("decode without options failed");
+    assert!(
+        without_options_decoded
+            .proof
+            .pcs
+            .iter()
+            .all(|pcs| pcs.final_poly.is_none())
+    );
+    assert!(
+        without_options_decoded
+            .proof
+            .pcs
+            .iter()
+            .all(|pcs| pcs.final_sumcheck.is_none())
+    );
+    let without_options_reencoded = encode_proof_blob_v1(
+        &without_options_decoded.public_inputs,
+        &without_options_decoded.proof,
+    );
+    assert_eq!(without_options_reencoded, without_options_blob);
+}
+
+#[test]
+fn decode_verify_bytes_calldata_rejects_trailing_data() {
+    let fixture = build_fixture();
+    let blob = encode_proof_blob_v1(&fixture.public_inputs, &fixture.proof);
+    let mut calldata = encode_calldata_verify_bytes(&blob);
+    calldata.extend_from_slice(&[0u8, 1u8, 2u8]);
+
+    assert!(
+        decode_verify_bytes_calldata(&calldata).is_err(),
+        "decoder must reject trailing calldata bytes"
+    );
 }
