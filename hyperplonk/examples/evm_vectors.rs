@@ -1,30 +1,23 @@
+#[path = "../src/evm_codec.rs"]
+mod evm_codec;
+
+use std::io::Write;
+use std::path::PathBuf;
+
 use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithPublicValues};
-use p3_challenger::{HashChallenger, SerializingChallenger32};
-use p3_dft::Radix2DitParallel;
-use p3_field::extension::BinomialExtensionField;
-use p3_field::{BasedVectorSpace, PrimeField32};
 use p3_hyperplonk::{HyperPlonkConfig, ProverInput, keygen, prove};
-use p3_keccak::Keccak256Hash;
-use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear};
+use p3_koala_bear::GenericPoseidon2LinearLayersKoalaBear;
 use p3_poseidon2_air::{RoundConstants, generate_trace_rows, num_cols};
-use p3_symmetric::CryptographicHasher;
-use p3_whir::{
-    FoldingFactor, KeccakNodeCompress, KeccakU32BeLeafHasher, ProtocolParameters,
-    SecurityAssumption, WhirPcs, digest_u64_to_bytes32,
-};
+use p3_whir::{FoldingFactor, ProtocolParameters, SecurityAssumption};
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
-use whir_p3::whir::proof::{QueryOpening, WhirProof};
 
-type Val = KoalaBear;
-type Challenge = BinomialExtensionField<Val, 4>;
+use crate::evm_codec::{
+    Challenge, Challenger, Compress, Dft, FieldHash, Pcs, Val, encode_calldata_verify_bytes,
+    encode_proof_blob_v1, render_json_payload,
+};
+
 type LinearLayers = GenericPoseidon2LinearLayersKoalaBear;
-
-type FieldHash = KeccakU32BeLeafHasher;
-type Compress = KeccakNodeCompress;
-type Dft<Val> = Radix2DitParallel<Val>;
-type Pcs<Val, Dft> = WhirPcs<Val, Dft, FieldHash, Compress, 4>;
-type Challenger = SerializingChallenger32<Val, HashChallenger<u8, Keccak256Hash, 32>>;
 
 const WIDTH: usize = 16;
 const SBOX_DEGREE: u64 = 3;
@@ -58,39 +51,91 @@ impl<AB: AirBuilder<F = Val>> Air<AB> for Poseidon2Air {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
-    const LUT: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        out.push(LUT[(b >> 4) as usize] as char);
-        out.push(LUT[(b & 0x0f) as usize] as char);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OutputFormat {
+    Json,
+    Calldata,
+}
+
+struct CliArgs {
+    format: OutputFormat,
+    out: Option<PathBuf>,
+    pretty: bool,
+}
+
+impl CliArgs {
+    fn parse() -> Result<Self, String> {
+        let mut format = OutputFormat::Json;
+        let mut out = None;
+        let mut pretty = false;
+
+        let mut args = std::env::args().skip(1);
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--format" => {
+                    let Some(value) = args.next() else {
+                        return Err(format!("missing value for --format\n{}", Self::usage()));
+                    };
+                    format = match value.as_str() {
+                        "json" => OutputFormat::Json,
+                        "calldata" => OutputFormat::Calldata,
+                        _ => {
+                            return Err(format!(
+                                "unsupported format '{value}', expected 'json' or 'calldata'\n{}",
+                                Self::usage()
+                            ));
+                        }
+                    };
+                }
+                "--out" => {
+                    let Some(value) = args.next() else {
+                        return Err(format!("missing value for --out\n{}", Self::usage()));
+                    };
+                    out = Some(PathBuf::from(value));
+                }
+                "--pretty" => {
+                    pretty = true;
+                }
+                "-h" | "--help" => {
+                    return Err(Self::usage().to_string());
+                }
+                _ => {
+                    return Err(format!("unknown argument '{arg}'\n{}", Self::usage()));
+                }
+            }
+        }
+
+        Ok(Self {
+            format,
+            out,
+            pretty,
+        })
     }
-    out
-}
 
-fn hex32(x: &[u8; 32]) -> String {
-    hex(x)
-}
-
-fn encode_val_u32_be(x: Val) -> [u8; 4] {
-    x.as_canonical_u32().to_be_bytes()
-}
-
-fn encode_challenge_bytes(ch: Challenge) -> Vec<u8> {
-    // Extension element = 4 base limbs (KoalaBear), each encoded as u32 BE.
-    let mut out = Vec::with_capacity(16);
-    for limb in Challenge::flatten_to_base(vec![ch]) {
-        out.extend_from_slice(&encode_val_u32_be(limb));
+    const fn usage() -> &'static str {
+        concat!(
+            "Usage: cargo run --example evm_vectors -- [OPTIONS]\n\n",
+            "Options:\n",
+            "  --format <json|calldata>   Output format (default: json)\n",
+            "  --out <path>               Write output to file (default: stdout)\n",
+            "  --pretty                   Pretty-print JSON output\n",
+            "  -h, --help                 Show this help\n",
+        )
     }
-    out
 }
 
-fn leaf_hash_from_bytes(leaf_payload: &[u8]) -> [u8; 32] {
-    let prefix = [0x00u8];
-    Keccak256Hash.hash_iter_slices([&prefix[..], leaf_payload])
-}
+fn run() -> Result<(), String> {
+    let cli = match CliArgs::parse() {
+        Ok(cli) => cli,
+        Err(err) => {
+            if err == CliArgs::usage() {
+                print!("{err}");
+                return Ok(());
+            }
+            return Err(err);
+        }
+    };
 
-fn main() {
     let mut rng = StdRng::seed_from_u64(0);
 
     let config = {
@@ -109,7 +154,7 @@ fn main() {
         };
         HyperPlonkConfig::<_, Challenge, _>::new(
             Pcs::new(dft, whir_params),
-            Challenger::from_hasher(Vec::new(), Keccak256Hash),
+            Challenger::from_hasher(Vec::new(), p3_keccak::Keccak256Hash),
         )
     };
 
@@ -134,123 +179,44 @@ fn main() {
     );
 
     let prover_inputs = vec![ProverInput::new(make_air(), Vec::new(), trace)];
+    let public_inputs = prover_inputs
+        .iter()
+        .map(|input| input.public_values.clone())
+        .collect::<Vec<_>>();
     let proof = prove(&config, &pk, prover_inputs);
 
-    // PCS proof is a `Vec<WhirProof<Val, Challenge, u64, 4>>`.
-    let pcs_proofs: &Vec<WhirProof<Val, Challenge, u64, 4>> = &proof.pcs;
+    let proof_blob = encode_proof_blob_v1(&public_inputs, &proof);
+    let calldata = encode_calldata_verify_bytes(&proof_blob);
 
-    println!("{{");
-    // HyperPlonk commitment (PCS commitment) is bytes32 in Keccak mode.
-    println!(
-        "  \"commitment_bytes32\": \"0x{}\",",
-        hex(&digest_u64_to_bytes32(proof.commitment.as_ref()))
-    );
-    println!("  \"pcs\": [");
-    for (pi, pcs) in pcs_proofs.iter().enumerate() {
-        println!("    {{");
-        println!(
-            "      \"initial_root\": \"0x{}\",",
-            hex32(&digest_u64_to_bytes32(&pcs.initial_commitment))
-        );
+    let output = match cli.format {
+        OutputFormat::Json => render_json_payload(&proof_blob, &calldata, cli.pretty),
+        OutputFormat::Calldata => evm_codec::hex_prefixed(&calldata),
+    };
 
-        // Initial openings live in round proofs / final_queries; we dump them all.
-        println!("      \"rounds\": [");
-        for (ri, round) in pcs.rounds.iter().enumerate() {
-            println!("        {{");
-            println!("          \"round_index\": {},", ri);
-            println!(
-                "          \"root\": \"0x{}\",",
-                hex32(&digest_u64_to_bytes32(&round.commitment))
-            );
-            println!("          \"queries\": [");
-            for (qi, q) in round.queries.iter().enumerate() {
-                let (kind, payload, siblings) = match q {
-                    QueryOpening::Base { values, proof } => {
-                        let mut payload = Vec::<u8>::with_capacity(values.len() * 4);
-                        for &v in values {
-                            payload.extend_from_slice(&encode_val_u32_be(v));
-                        }
-                        ("base", payload, proof.as_slice())
-                    }
-                    QueryOpening::Extension { values, proof } => {
-                        let mut payload = Vec::<u8>::with_capacity(values.len() * 16);
-                        for &v in values {
-                            payload.extend_from_slice(&encode_challenge_bytes(v));
-                        }
-                        ("extension", payload, proof.as_slice())
-                    }
-                };
-
-                let leaf = leaf_hash_from_bytes(&payload);
-                println!("            {{");
-                println!("              \"query_index\": {},", qi);
-                println!("              \"kind\": \"{}\",", kind);
-                println!("              \"leaf_payload\": \"0x{}\",", hex(&payload));
-                println!("              \"leaf_hash\": \"0x{}\",", hex32(&leaf));
-                println!("              \"siblings\": [");
-                for (si, sib) in siblings.iter().enumerate() {
-                    let comma = if si + 1 == siblings.len() { "" } else { "," };
-                    let sib_bytes = digest_u64_to_bytes32(sib);
-                    println!("                \"0x{}\"{}", hex32(&sib_bytes), comma);
-                }
-                println!("              ]");
-                let comma = if qi + 1 == round.queries.len() {
-                    ""
-                } else {
-                    ","
-                };
-                println!("            }}{comma}");
-            }
-            println!("          ]");
-            let comma = if ri + 1 == pcs.rounds.len() { "" } else { "," };
-            println!("        }}{comma}");
+    match cli.out {
+        Some(path) => {
+            std::fs::write(&path, output.as_bytes())
+                .map_err(|err| format!("failed to write output to '{}': {err}", path.display()))?;
         }
-        println!("      ],");
-
-        println!("      \"final_queries\": [");
-        for (qi, q) in pcs.final_queries.iter().enumerate() {
-            let (kind, payload, siblings) = match q {
-                QueryOpening::Base { values, proof } => {
-                    let mut payload = Vec::<u8>::with_capacity(values.len() * 4);
-                    for &v in values {
-                        payload.extend_from_slice(&encode_val_u32_be(v));
-                    }
-                    ("base", payload, proof.as_slice())
-                }
-                QueryOpening::Extension { values, proof } => {
-                    let mut payload = Vec::<u8>::with_capacity(values.len() * 16);
-                    for &v in values {
-                        payload.extend_from_slice(&encode_challenge_bytes(v));
-                    }
-                    ("extension", payload, proof.as_slice())
-                }
-            };
-
-            let leaf = leaf_hash_from_bytes(&payload);
-            println!("        {{");
-            println!("          \"query_index\": {},", qi);
-            println!("          \"kind\": \"{}\",", kind);
-            println!("          \"leaf_payload\": \"0x{}\",", hex(&payload));
-            println!("          \"leaf_hash\": \"0x{}\",", hex32(&leaf));
-            println!("          \"siblings\": [");
-            for (si, sib) in siblings.iter().enumerate() {
-                let comma = if si + 1 == siblings.len() { "" } else { "," };
-                let sib_bytes = digest_u64_to_bytes32(sib);
-                println!("            \"0x{}\"{}", hex32(&sib_bytes), comma);
+        None => {
+            let mut stdout = std::io::stdout();
+            stdout
+                .write_all(output.as_bytes())
+                .map_err(|err| format!("failed to write output to stdout: {err}"))?;
+            if cli.format == OutputFormat::Calldata {
+                stdout
+                    .write_all(b"\n")
+                    .map_err(|err| format!("failed to write newline: {err}"))?;
             }
-            println!("          ]");
-            let comma = if qi + 1 == pcs.final_queries.len() {
-                ""
-            } else {
-                ","
-            };
-            println!("        }}{comma}");
         }
-        println!("      ]");
-
-        let comma = if pi + 1 == pcs_proofs.len() { "" } else { "," };
-        println!("    }}{comma}");
     }
-    println!("  ]");
-    println!("}}");
+
+    Ok(())
+}
+
+fn main() {
+    if let Err(err) = run() {
+        eprintln!("{err}");
+        std::process::exit(1);
+    }
 }
