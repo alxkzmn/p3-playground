@@ -42,7 +42,7 @@ where
     debug_assert!(!inputs.is_empty());
 
     let pcs = config.pcs();
-    let mut challenger = config.initialise_challenger();
+    let mut challenger = config.initialize_challenger();
 
     cloned(&proof.log_bs).for_each(|log_b| challenger.observe(Val::<C>::from_u8(log_b as u8)));
     challenger.observe(proof.commitment.clone());

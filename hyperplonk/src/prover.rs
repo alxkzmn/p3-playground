@@ -57,7 +57,7 @@ where
         .collect_vec();
 
     let pcs = config.pcs();
-    let mut challenger = config.initialise_challenger();
+    let mut challenger = config.initialize_challenger();
 
     let (commitment, prover_data) =
         info_span!("commit to main data").in_scope(|| pcs.commit(traces));

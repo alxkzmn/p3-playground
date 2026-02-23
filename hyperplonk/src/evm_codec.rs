@@ -3,9 +3,9 @@ use core::fmt;
 
 use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_dft::Radix2DitParallel;
-use p3_field::extension::BinomialExtensionField;
 #[cfg(test)]
 use p3_field::PrimeCharacteristicRing;
+use p3_field::extension::BinomialExtensionField;
 use p3_field::{BasedVectorSpace, PrimeField32};
 #[cfg(test)]
 use p3_hyperplonk::Fraction;
@@ -18,7 +18,7 @@ use p3_koala_bear::KoalaBear;
 use p3_symmetric::CryptographicHasher;
 #[cfg(test)]
 use p3_whir::digest_bytes32_to_u64;
-use p3_whir::{digest_u64_to_bytes32, KeccakNodeCompress, KeccakU32BeLeafHasher, WhirPcs};
+use p3_whir::{KeccakNodeCompress, KeccakU32BeLeafHasher, WhirPcs, digest_u64_to_bytes32};
 #[cfg(test)]
 use whir_p3::poly::evals::EvaluationsList;
 use whir_p3::whir::proof::{QueryOpening, SumcheckData, WhirProof, WhirRoundProof};
@@ -946,9 +946,5 @@ fn decode_abi_word_usize(bytes: &[u8]) -> Result<usize, DecodeError> {
 
 fn pad32(len: usize) -> usize {
     let rem = len % 32;
-    if rem == 0 {
-        len
-    } else {
-        len + (32 - rem)
-    }
+    if rem == 0 { len } else { len + (32 - rem) }
 }

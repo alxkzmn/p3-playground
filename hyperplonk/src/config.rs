@@ -29,15 +29,15 @@ pub trait HyperPlonkGenericConfig {
     /// Get a reference to the PCS used by this proof configuration.
     fn pcs(&self) -> &Self::Pcs;
 
-    /// Get an initialisation of the challenger used by this proof configuration.
-    fn initialise_challenger(&self) -> Self::Challenger;
+    /// Get an initialization of the challenger used by this proof configuration.
+    fn initialize_challenger(&self) -> Self::Challenger;
 }
 
 #[derive(Debug)]
 pub struct HyperPlonkConfig<Pcs, Challenge, Challenger> {
     /// The PCS used to commit polynomials and prove opening proofs.
     pcs: Pcs,
-    /// An initialised instance of the challenger.
+    /// An initialized instance of the challenger.
     challenger: Challenger,
     _phantom: PhantomData<Challenge>,
 }
@@ -70,7 +70,7 @@ where
         &self.pcs
     }
 
-    fn initialise_challenger(&self) -> Self::Challenger {
+    fn initialize_challenger(&self) -> Self::Challenger {
         self.challenger.clone()
     }
 }
