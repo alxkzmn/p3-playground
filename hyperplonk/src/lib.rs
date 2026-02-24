@@ -1,8 +1,10 @@
 #![no_std]
 
 extern crate alloc;
+extern crate self as p3_hyperplonk;
 
 mod config;
+pub mod evm_codec;
 mod folder;
 mod interaction;
 mod keygen;

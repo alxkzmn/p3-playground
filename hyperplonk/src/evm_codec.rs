@@ -1,9 +1,10 @@
-#[cfg(not(test))]
-use alloc::{format, string::String, vec::Vec};
+extern crate alloc;
+
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
 #[cfg(test)]
 use core::fmt;
-#[cfg(test)]
-use std::{format, string::String, vec::Vec};
 
 use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_dft::Radix2DitParallel;
@@ -11,11 +12,12 @@ use p3_dft::Radix2DitParallel;
 use p3_field::PrimeCharacteristicRing;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{BasedVectorSpace, ExtensionField, PrimeField32, TwoAdicField};
-#[cfg(test)]
 use p3_hyperplonk::{
-    AirProof, BatchSumcheckProof, CompressedRoundPoly, Fraction, FractionalSumProof,
-    HyperPlonkConfig, PiopProof, Proof, RoundPoly,
+    AirProof, BatchSumcheckProof, CompressedRoundPoly, FractionalSumProof, HyperPlonkConfig,
+    PiopProof, Proof, RoundPoly,
 };
+#[cfg(test)]
+use p3_hyperplonk::{AirUnivariateSkipProof, Fraction};
 use p3_keccak::Keccak256Hash;
 use p3_koala_bear::KoalaBear;
 use p3_symmetric::CryptographicHasher;
@@ -26,13 +28,6 @@ use whir_p3::poly::evals::EvaluationsList;
 #[cfg(test)]
 use whir_p3::whir::merkle_multiproof::MerkleMultiProof;
 use whir_p3::whir::proof::{QueryBatchOpening, SumcheckData, WhirProof, WhirRoundProof};
-
-#[cfg(not(test))]
-use crate::{
-    AirProof, BatchSumcheckProof, CompressedRoundPoly, FractionalSumProof, HyperPlonkConfig,
-    PiopProof, Proof, RoundPoly,
-};
-
 pub const PROOF_BLOB_MAGIC: [u8; 4] = *b"HPK1";
 pub const PROOF_BLOB_VERSION: u8 = 2;
 pub const JSON_SCHEMA: &str = "p3-hyperplonk-evm-proof-v2";
@@ -86,7 +81,7 @@ impl fmt::Display for DecodeError {
 }
 
 #[cfg(test)]
-impl std::error::Error for DecodeError {}
+impl core::error::Error for DecodeError {}
 
 pub fn encode_proof_blob_v1(public_inputs: &[Vec<Val>], proof: &HyperPlonkProof) -> Vec<u8> {
     encode_proof_blob_v1_generic(public_inputs, proof)
@@ -487,7 +482,7 @@ fn decode_air_proof(reader: &mut BlobReader<'_>) -> Result<AirProof<Challenge>, 
     let n_univariate_skips = reader.read_len()?;
     let mut univariate_skips = Vec::with_capacity(n_univariate_skips);
     for _ in 0..n_univariate_skips {
-        univariate_skips.push(p3_hyperplonk::AirUnivariateSkipProof {
+        univariate_skips.push(AirUnivariateSkipProof {
             skip_rounds: reader.read_len()?,
             zero_check_round_poly: decode_round_poly(reader)?,
             eval_check_round_poly: decode_round_poly(reader)?,
