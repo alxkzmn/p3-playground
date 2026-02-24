@@ -1,29 +1,37 @@
+#[cfg(not(test))]
+use alloc::{format, string::String, vec::Vec};
 #[cfg(test)]
 use core::fmt;
+#[cfg(test)]
+use std::{format, string::String, vec::Vec};
 
 use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_dft::Radix2DitParallel;
-use p3_field::extension::BinomialExtensionField;
 #[cfg(test)]
 use p3_field::PrimeCharacteristicRing;
-use p3_field::{BasedVectorSpace, PrimeField32};
+use p3_field::extension::BinomialExtensionField;
+use p3_field::{BasedVectorSpace, ExtensionField, PrimeField32, TwoAdicField};
 #[cfg(test)]
-use p3_hyperplonk::Fraction;
 use p3_hyperplonk::{
-    AirProof, BatchSumcheckProof, CompressedRoundPoly, FractionalSumProof, HyperPlonkConfig,
-    PiopProof, Proof, RoundPoly,
+    AirProof, BatchSumcheckProof, CompressedRoundPoly, Fraction, FractionalSumProof,
+    HyperPlonkConfig, PiopProof, Proof, RoundPoly,
 };
 use p3_keccak::Keccak256Hash;
 use p3_koala_bear::KoalaBear;
 use p3_symmetric::CryptographicHasher;
 #[cfg(test)]
 use p3_whir::digest_bytes32_to_u64;
-use p3_whir::{digest_u64_to_bytes32, KeccakNodeCompress, KeccakU32BeLeafHasher, WhirPcs};
-#[cfg(test)]
+use p3_whir::{KeccakNodeCompress, KeccakU32BeLeafHasher, WhirPcs, digest_u64_to_bytes32};
 use whir_p3::poly::evals::EvaluationsList;
 #[cfg(test)]
 use whir_p3::whir::merkle_multiproof::MerkleMultiProof;
 use whir_p3::whir::proof::{QueryBatchOpening, SumcheckData, WhirProof, WhirRoundProof};
+
+#[cfg(not(test))]
+use crate::{
+    AirProof, BatchSumcheckProof, CompressedRoundPoly, FractionalSumProof, HyperPlonkConfig,
+    PiopProof, Proof, RoundPoly,
+};
 
 pub const PROOF_BLOB_MAGIC: [u8; 4] = *b"HPK1";
 pub const PROOF_BLOB_VERSION: u8 = 2;
@@ -81,13 +89,33 @@ impl fmt::Display for DecodeError {
 impl std::error::Error for DecodeError {}
 
 pub fn encode_proof_blob_v1(public_inputs: &[Vec<Val>], proof: &HyperPlonkProof) -> Vec<u8> {
-    encode_proof_blob_v1_with_offsets(public_inputs, proof).0
+    encode_proof_blob_v1_generic(public_inputs, proof)
 }
 
 pub fn encode_proof_blob_v1_with_offsets(
     public_inputs: &[Vec<Val>],
     proof: &HyperPlonkProof,
 ) -> (Vec<u8>, ProofBlobOffsets) {
+    encode_proof_blob_v1_generic_with_offsets(public_inputs, proof)
+}
+
+pub fn encode_proof_blob_v1_generic<EF>(
+    public_inputs: &[Vec<Val>],
+    proof: &Proof<HyperPlonkConfig<Pcs, EF, Challenger>>,
+) -> Vec<u8>
+where
+    EF: ExtensionField<Val> + TwoAdicField + BasedVectorSpace<Val> + Copy,
+{
+    encode_proof_blob_v1_generic_with_offsets(public_inputs, proof).0
+}
+
+pub fn encode_proof_blob_v1_generic_with_offsets<EF>(
+    public_inputs: &[Vec<Val>],
+    proof: &Proof<HyperPlonkConfig<Pcs, EF, Challenger>>,
+) -> (Vec<u8>, ProofBlobOffsets)
+where
+    EF: ExtensionField<Val> + TwoAdicField + BasedVectorSpace<Val> + Copy,
+{
     let mut writer = BlobWriter::new();
     let mut offsets = ProofBlobOffsets::default();
 
@@ -120,20 +148,21 @@ pub fn encode_proof_blob_v1_with_offsets(
     (writer.finish(), offsets)
 }
 
-fn encode_piop(
-    writer: &mut BlobWriter,
-    piop: &PiopProof<Challenge>,
-    offsets: &mut ProofBlobOffsets,
-) {
+fn encode_piop<EF>(writer: &mut BlobWriter, piop: &PiopProof<EF>, offsets: &mut ProofBlobOffsets)
+where
+    EF: ExtensionField<Val> + TwoAdicField + BasedVectorSpace<Val> + Copy,
+{
     encode_fractional_sum(writer, &piop.fractional_sum, offsets);
     encode_air_proof(writer, &piop.air, offsets);
 }
 
-fn encode_fractional_sum(
+fn encode_fractional_sum<EF>(
     writer: &mut BlobWriter,
-    proof: &FractionalSumProof<Challenge>,
+    proof: &FractionalSumProof<EF>,
     offsets: &mut ProofBlobOffsets,
-) {
+) where
+    EF: ExtensionField<Val> + TwoAdicField + BasedVectorSpace<Val> + Copy,
+{
     writer.write_len(proof.sums.len());
     for sums in &proof.sums {
         writer.write_len(sums.len());
@@ -149,11 +178,13 @@ fn encode_fractional_sum(
     }
 }
 
-fn encode_air_proof(
+fn encode_air_proof<EF>(
     writer: &mut BlobWriter,
-    proof: &AirProof<Challenge>,
+    proof: &AirProof<EF>,
     offsets: &mut ProofBlobOffsets,
-) {
+) where
+    EF: ExtensionField<Val> + TwoAdicField + BasedVectorSpace<Val> + Copy,
+{
     writer.write_len(proof.univariate_skips.len());
     for skip in &proof.univariate_skips {
         writer.write_len(skip.skip_rounds);
@@ -173,33 +204,36 @@ fn encode_air_proof(
     encode_batch_sumcheck_proof(writer, &proof.univariate_eval_check, offsets);
 }
 
-fn encode_round_poly(
-    writer: &mut BlobWriter,
-    poly: &RoundPoly<Challenge>,
-    marker: &mut Option<usize>,
-) {
+fn encode_round_poly<EF>(writer: &mut BlobWriter, poly: &RoundPoly<EF>, marker: &mut Option<usize>)
+where
+    EF: ExtensionField<Val> + TwoAdicField + BasedVectorSpace<Val> + Copy,
+{
     writer.write_len(poly.0.len());
     for &coeff in &poly.0 {
         writer.write_challenge_marked(coeff, marker);
     }
 }
 
-fn encode_compressed_round_poly(
+fn encode_compressed_round_poly<EF>(
     writer: &mut BlobWriter,
-    poly: &CompressedRoundPoly<Challenge>,
+    poly: &CompressedRoundPoly<EF>,
     marker: &mut Option<usize>,
-) {
+) where
+    EF: ExtensionField<Val> + TwoAdicField + BasedVectorSpace<Val> + Copy,
+{
     writer.write_len(poly.0.len());
     for &coeff in &poly.0 {
         writer.write_challenge_marked(coeff, marker);
     }
 }
 
-fn encode_batch_sumcheck_proof(
+fn encode_batch_sumcheck_proof<EF>(
     writer: &mut BlobWriter,
-    proof: &BatchSumcheckProof<Challenge>,
+    proof: &BatchSumcheckProof<EF>,
     offsets: &mut ProofBlobOffsets,
-) {
+) where
+    EF: ExtensionField<Val> + TwoAdicField + BasedVectorSpace<Val> + Copy,
+{
     writer.write_len(proof.compressed_round_polys.len());
     for poly in &proof.compressed_round_polys {
         encode_compressed_round_poly(writer, poly, &mut offsets.first_sumcheck_coeff_offset);
@@ -214,11 +248,13 @@ fn encode_batch_sumcheck_proof(
     }
 }
 
-fn encode_whir_proof(
+fn encode_whir_proof<EF>(
     writer: &mut BlobWriter,
-    proof: &WhirPcsProof,
+    proof: &WhirProof<Val, EF, u64, 4>,
     offsets: &mut ProofBlobOffsets,
-) {
+) where
+    EF: ExtensionField<Val> + TwoAdicField + BasedVectorSpace<Val> + Copy,
+{
     writer.write_digest(&proof.initial_commitment);
 
     writer.write_len(proof.initial_ood_answers.len());
@@ -233,15 +269,18 @@ fn encode_whir_proof(
         encode_whir_round(writer, round, offsets);
     }
 
-    writer.write_option(&proof.final_poly, |writer, final_poly| {
-        if offsets.first_final_poly_offset.is_none() && !final_poly.as_slice().is_empty() {
-            offsets.first_final_poly_offset = Some(writer.pos());
-        }
-        writer.write_len(final_poly.as_slice().len());
-        for &eval in final_poly.as_slice() {
-            writer.write_challenge(eval);
-        }
-    });
+    writer.write_option(
+        &proof.final_poly,
+        |writer, final_poly: &EvaluationsList<EF>| {
+            if offsets.first_final_poly_offset.is_none() && !final_poly.as_slice().is_empty() {
+                offsets.first_final_poly_offset = Some(writer.pos());
+            }
+            writer.write_len(final_poly.as_slice().len());
+            for &eval in final_poly.as_slice() {
+                writer.write_challenge(eval);
+            }
+        },
+    );
 
     writer.write_val(proof.final_pow_witness);
 
@@ -256,11 +295,13 @@ fn encode_whir_proof(
     });
 }
 
-fn encode_whir_round(
+fn encode_whir_round<EF>(
     writer: &mut BlobWriter,
-    round: &WhirRoundProof<Val, Challenge, u64, 4>,
+    round: &WhirRoundProof<Val, EF, u64, 4>,
     offsets: &mut ProofBlobOffsets,
-) {
+) where
+    EF: ExtensionField<Val> + TwoAdicField + BasedVectorSpace<Val> + Copy,
+{
     writer.write_digest(&round.commitment);
 
     writer.write_len(round.ood_answers.len());
@@ -279,11 +320,13 @@ fn encode_whir_round(
     encode_whir_sumcheck(writer, &round.sumcheck, offsets);
 }
 
-fn encode_whir_sumcheck(
+fn encode_whir_sumcheck<EF>(
     writer: &mut BlobWriter,
-    sumcheck: &SumcheckData<Val, Challenge>,
+    sumcheck: &SumcheckData<Val, EF>,
     offsets: &mut ProofBlobOffsets,
-) {
+) where
+    EF: ExtensionField<Val> + TwoAdicField + BasedVectorSpace<Val> + Copy,
+{
     writer.write_len(sumcheck.polynomial_evaluations.len());
     for coeffs in &sumcheck.polynomial_evaluations {
         writer.write_challenge_marked(coeffs[0], &mut offsets.first_sumcheck_coeff_offset);
@@ -296,18 +339,20 @@ fn encode_whir_sumcheck(
     }
 }
 
-fn encode_query_batch(
+fn encode_query_batch<EF>(
     writer: &mut BlobWriter,
-    query: &QueryBatchOpening<Val, Challenge, u64, 4>,
+    query: &QueryBatchOpening<Val, EF, u64, 4>,
     offsets: &mut ProofBlobOffsets,
-) {
+) where
+    EF: ExtensionField<Val> + TwoAdicField + BasedVectorSpace<Val> + Copy,
+{
     match query {
         QueryBatchOpening::Base { values, proof } => {
             writer.write_u8(0);
             writer.write_len(values.len());
-            let row_width = values.first().map_or(0, Vec::len);
+            let row_width = values.first().map_or(0, |row| row.len());
             writer.write_len(row_width);
-            for row in values {
+            for row in values.iter() {
                 assert_eq!(row.len(), row_width, "inconsistent base query row width");
                 for &value in row {
                     writer.write_val(value);
@@ -324,9 +369,9 @@ fn encode_query_batch(
         QueryBatchOpening::Extension { values, proof } => {
             writer.write_u8(1);
             writer.write_len(values.len());
-            let row_width = values.first().map_or(0, Vec::len);
+            let row_width = values.first().map_or(0, |row| row.len());
             writer.write_len(row_width);
-            for row in values {
+            for row in values.iter() {
                 assert_eq!(
                     row.len(),
                     row_width,
@@ -787,13 +832,19 @@ impl BlobWriter {
             .extend_from_slice(&value.as_canonical_u32().to_be_bytes());
     }
 
-    fn write_challenge(&mut self, value: Challenge) {
-        for limb in Challenge::flatten_to_base(vec![value]) {
+    fn write_challenge<EF>(&mut self, value: EF)
+    where
+        EF: BasedVectorSpace<Val> + Copy,
+    {
+        for &limb in value.as_basis_coefficients_slice() {
             self.write_val(limb);
         }
     }
 
-    fn write_challenge_marked(&mut self, value: Challenge, offset: &mut Option<usize>) {
+    fn write_challenge_marked<EF>(&mut self, value: EF, offset: &mut Option<usize>)
+    where
+        EF: BasedVectorSpace<Val> + Copy,
+    {
         if offset.is_none() {
             *offset = Some(self.pos());
         }
@@ -972,9 +1023,5 @@ fn decode_abi_word_usize(bytes: &[u8]) -> Result<usize, DecodeError> {
 
 fn pad32(len: usize) -> usize {
     let rem = len % 32;
-    if rem == 0 {
-        len
-    } else {
-        len + (32 - rem)
-    }
+    if rem == 0 { len } else { len + (32 - rem) }
 }
