@@ -3,9 +3,9 @@ use core::fmt;
 
 use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_dft::Radix2DitParallel;
+use p3_field::extension::BinomialExtensionField;
 #[cfg(test)]
 use p3_field::PrimeCharacteristicRing;
-use p3_field::extension::BinomialExtensionField;
 use p3_field::{BasedVectorSpace, PrimeField32};
 #[cfg(test)]
 use p3_hyperplonk::Fraction;
@@ -18,14 +18,16 @@ use p3_koala_bear::KoalaBear;
 use p3_symmetric::CryptographicHasher;
 #[cfg(test)]
 use p3_whir::digest_bytes32_to_u64;
-use p3_whir::{KeccakNodeCompress, KeccakU32BeLeafHasher, WhirPcs, digest_u64_to_bytes32};
+use p3_whir::{digest_u64_to_bytes32, KeccakNodeCompress, KeccakU32BeLeafHasher, WhirPcs};
 #[cfg(test)]
 use whir_p3::poly::evals::EvaluationsList;
-use whir_p3::whir::proof::{QueryOpening, SumcheckData, WhirProof, WhirRoundProof};
+#[cfg(test)]
+use whir_p3::whir::merkle_multiproof::MerkleMultiProof;
+use whir_p3::whir::proof::{QueryBatchOpening, SumcheckData, WhirProof, WhirRoundProof};
 
 pub const PROOF_BLOB_MAGIC: [u8; 4] = *b"HPK1";
-pub const PROOF_BLOB_VERSION: u8 = 1;
-pub const JSON_SCHEMA: &str = "p3-hyperplonk-evm-proof-v1";
+pub const PROOF_BLOB_VERSION: u8 = 2;
+pub const JSON_SCHEMA: &str = "p3-hyperplonk-evm-proof-v2";
 pub const VERIFY_FUNCTION: &str = "verify(bytes)";
 
 pub type Val = KoalaBear;
@@ -243,10 +245,11 @@ fn encode_whir_proof(
 
     writer.write_val(proof.final_pow_witness);
 
-    writer.write_len(proof.final_queries.len());
-    for query in &proof.final_queries {
-        encode_query_opening(writer, query, offsets);
-    }
+    let final_query_batch = proof
+        .final_query_batch
+        .as_ref()
+        .expect("missing final query batch in WHIR proof");
+    encode_query_batch(writer, final_query_batch, offsets);
 
     writer.write_option(&proof.final_sumcheck, |writer, sumcheck| {
         encode_whir_sumcheck(writer, sumcheck, offsets);
@@ -267,10 +270,11 @@ fn encode_whir_round(
 
     writer.write_val(round.pow_witness);
 
-    writer.write_len(round.queries.len());
-    for query in &round.queries {
-        encode_query_opening(writer, query, offsets);
-    }
+    let query_batch = round
+        .query_batch
+        .as_ref()
+        .expect("missing round query batch in WHIR proof");
+    encode_query_batch(writer, query_batch, offsets);
 
     encode_whir_sumcheck(writer, &round.sumcheck, offsets);
 }
@@ -292,34 +296,48 @@ fn encode_whir_sumcheck(
     }
 }
 
-fn encode_query_opening(
+fn encode_query_batch(
     writer: &mut BlobWriter,
-    query: &QueryOpening<Val, Challenge, u64, 4>,
+    query: &QueryBatchOpening<Val, Challenge, u64, 4>,
     offsets: &mut ProofBlobOffsets,
 ) {
     match query {
-        QueryOpening::Base { values, proof } => {
+        QueryBatchOpening::Base { values, proof } => {
             writer.write_u8(0);
             writer.write_len(values.len());
-            for &value in values {
-                writer.write_val(value);
+            let row_width = values.first().map_or(0, Vec::len);
+            writer.write_len(row_width);
+            for row in values {
+                assert_eq!(row.len(), row_width, "inconsistent base query row width");
+                for &value in row {
+                    writer.write_val(value);
+                }
             }
-            writer.write_len(proof.len());
-            for sibling in proof {
+            writer.write_len(proof.decommitments.len());
+            for sibling in &proof.decommitments {
                 if offsets.first_merkle_sibling_offset.is_none() {
                     offsets.first_merkle_sibling_offset = Some(writer.pos());
                 }
                 writer.write_digest(sibling);
             }
         }
-        QueryOpening::Extension { values, proof } => {
+        QueryBatchOpening::Extension { values, proof } => {
             writer.write_u8(1);
             writer.write_len(values.len());
-            for &value in values {
-                writer.write_challenge(value);
+            let row_width = values.first().map_or(0, Vec::len);
+            writer.write_len(row_width);
+            for row in values {
+                assert_eq!(
+                    row.len(),
+                    row_width,
+                    "inconsistent extension query row width"
+                );
+                for &value in row {
+                    writer.write_challenge(value);
+                }
             }
-            writer.write_len(proof.len());
-            for sibling in proof {
+            writer.write_len(proof.decommitments.len());
+            for sibling in &proof.decommitments {
                 if offsets.first_merkle_sibling_offset.is_none() {
                     offsets.first_merkle_sibling_offset = Some(writer.pos());
                 }
@@ -519,11 +537,7 @@ fn decode_whir_proof(reader: &mut BlobReader<'_>) -> Result<WhirPcsProof, Decode
 
     let final_pow_witness = reader.read_val()?;
 
-    let n_final_queries = reader.read_len()?;
-    let mut final_queries = Vec::with_capacity(n_final_queries);
-    for _ in 0..n_final_queries {
-        final_queries.push(decode_query_opening(reader)?);
-    }
+    let final_query_batch = decode_query_batch(reader)?;
 
     let final_sumcheck = reader.read_option(decode_whir_sumcheck)?;
 
@@ -534,7 +548,7 @@ fn decode_whir_proof(reader: &mut BlobReader<'_>) -> Result<WhirPcsProof, Decode
         rounds,
         final_poly,
         final_pow_witness,
-        final_queries,
+        final_query_batch: Some(final_query_batch),
         final_sumcheck,
     })
 }
@@ -553,11 +567,7 @@ fn decode_whir_round(
 
     let pow_witness = reader.read_val()?;
 
-    let n_queries = reader.read_len()?;
-    let mut queries = Vec::with_capacity(n_queries);
-    for _ in 0..n_queries {
-        queries.push(decode_query_opening(reader)?);
-    }
+    let query_batch = decode_query_batch(reader)?;
 
     let sumcheck = decode_whir_sumcheck(reader)?;
 
@@ -565,7 +575,7 @@ fn decode_whir_round(
         commitment,
         ood_answers,
         pow_witness,
-        queries,
+        query_batch: Some(query_batch),
         sumcheck,
     })
 }
@@ -595,38 +605,54 @@ fn decode_whir_sumcheck(
 }
 
 #[cfg(test)]
-fn decode_query_opening(
+fn decode_query_batch(
     reader: &mut BlobReader<'_>,
-) -> Result<QueryOpening<Val, Challenge, u64, 4>, DecodeError> {
+) -> Result<QueryBatchOpening<Val, Challenge, u64, 4>, DecodeError> {
     let tag = reader.read_u8()?;
     match tag {
         0 => {
-            let n_values = reader.read_len()?;
-            let mut values = Vec::with_capacity(n_values);
-            for _ in 0..n_values {
-                values.push(reader.read_val()?);
+            let query_count = reader.read_len()?;
+            let row_width = reader.read_len()?;
+            let mut values = Vec::with_capacity(query_count);
+            for _ in 0..query_count {
+                let mut row = Vec::with_capacity(row_width);
+                for _ in 0..row_width {
+                    row.push(reader.read_val()?);
+                }
+                values.push(row);
             }
-            let n_siblings = reader.read_len()?;
-            let mut proof = Vec::with_capacity(n_siblings);
-            for _ in 0..n_siblings {
-                proof.push(reader.read_digest()?);
+            let n_decommitments = reader.read_len()?;
+            let mut decommitments = Vec::with_capacity(n_decommitments);
+            for _ in 0..n_decommitments {
+                decommitments.push(reader.read_digest()?);
             }
-            Ok(QueryOpening::Base { values, proof })
+            Ok(QueryBatchOpening::Base {
+                values,
+                proof: MerkleMultiProof { decommitments },
+            })
         }
         1 => {
-            let n_values = reader.read_len()?;
-            let mut values = Vec::with_capacity(n_values);
-            for _ in 0..n_values {
-                values.push(reader.read_challenge()?);
+            let query_count = reader.read_len()?;
+            let row_width = reader.read_len()?;
+            let mut values = Vec::with_capacity(query_count);
+            for _ in 0..query_count {
+                let mut row = Vec::with_capacity(row_width);
+                for _ in 0..row_width {
+                    row.push(reader.read_challenge()?);
+                }
+                values.push(row);
             }
-            let n_siblings = reader.read_len()?;
-            let mut proof = Vec::with_capacity(n_siblings);
-            for _ in 0..n_siblings {
-                proof.push(reader.read_digest()?);
+            let n_decommitments = reader.read_len()?;
+            let mut decommitments = Vec::with_capacity(n_decommitments);
+            for _ in 0..n_decommitments {
+                decommitments.push(reader.read_digest()?);
             }
-            Ok(QueryOpening::Extension { values, proof })
+            Ok(QueryBatchOpening::Extension {
+                values,
+                proof: MerkleMultiProof { decommitments },
+            })
         }
-        _ => Err(DecodeError::new("unknown query opening tag")),
+        _ => Err(DecodeError::new("unknown query batch tag")),
     }
 }
 
@@ -946,5 +972,9 @@ fn decode_abi_word_usize(bytes: &[u8]) -> Result<usize, DecodeError> {
 
 fn pad32(len: usize) -> usize {
     let rem = len % 32;
-    if rem == 0 { len } else { len + (32 - rem) }
+    if rem == 0 {
+        len
+    } else {
+        len + (32 - rem)
+    }
 }

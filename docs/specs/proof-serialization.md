@@ -1,11 +1,11 @@
-# HyperPlonk EVM Proof Serialization v1
+# HyperPlonk EVM Proof Serialization v2
 
 This document defines the canonical wire format emitted by `evm_vectors` for on-chain verification.
 
 ## Goals
 
 - Include all verifier-required proof material (HyperPlonk + WHIR + public inputs).
-- Keep v1 minimal and deterministic (no debug-only redundancy).
+- Keep v2 minimal and deterministic (no debug-only redundancy).
 - Preserve forward compatibility for future size optimizations.
 
 ## Outputs
@@ -18,14 +18,14 @@ The example supports two output modes:
 ## Fixed verifier entrypoint
 
 - Function signature: `verify(bytes)`
-- Calldata format: `selector || abi.encode(bytes proof_blob_v1)`
+- Calldata format: `selector || abi.encode(bytes proof_blob_v2)`
 - `selector` is the first 4 bytes of `keccak256("verify(bytes)")`.
 
-## JSON schema (`p3-hyperplonk-evm-proof-v1`)
+## JSON schema (`p3-hyperplonk-evm-proof-v2`)
 
 ```json
 {
-  "schema": "p3-hyperplonk-evm-proof-v1",
+  "schema": "p3-hyperplonk-evm-proof-v2",
   "verify_function": "verify(bytes)",
   "selector": "0x....",
   "proof_bytes": "0x....",
@@ -35,12 +35,12 @@ The example supports two output modes:
 }
 ```
 
-## Binary proof blob (`proof_blob_v1`)
+## Binary proof blob (`proof_blob_v2`)
 
 ### Envelope
 
 - `magic[4] = "HPK1"`
-- `version:u8 = 1`
+- `version:u8 = 2`
 
 ### Public input section
 
@@ -70,11 +70,11 @@ For each WHIR proof, encode:
    - `commitment`
    - `ood_answers`
    - `pow_witness`
-   - `queries`
+   - `query_batch`
    - `sumcheck`
 5. `final_poly` (option tagged)
 6. `final_pow_witness`
-7. `final_queries`
+7. `final_query_batch`
 8. `final_sumcheck` (option tagged)
 
 ## Primitive encodings
@@ -86,6 +86,17 @@ For each WHIR proof, encode:
   - `bytes32 = u64_be[0] || u64_be[1] || u64_be[2] || u64_be[3]`
 - `option`: 1-byte tag (`0 = None`, `1 = Some`), followed by payload for `Some`.
 - `query kind`: 1-byte tag (`0 = base`, `1 = extension`).
+
+### Query batch encoding (per round and final round)
+
+- `query_kind:u8` (`0 = base`, `1 = extension`)
+- `query_count:varuint`
+- `row_width:varuint`
+- `values_flat`:
+  - base: `query_count * row_width` base-field elements
+  - extension: `query_count * row_width` extension-field elements
+- `decommit_count:varuint`
+- `decommitments[decommit_count]:digest`
 
 ## Determinism and strict decoding
 
@@ -99,5 +110,5 @@ Decoders MUST reject:
 
 ## Compatibility guidance
 
-- v1 is intentionally minimal for correctness and benchmarking.
+- v2 is intentionally minimal for correctness and benchmarking.
 - Future compression/packing changes should use a new version while preserving `verify(bytes)` call shape.

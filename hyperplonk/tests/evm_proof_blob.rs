@@ -2,10 +2,10 @@ use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, BaseAirWithPu
 use p3_challenger::{HashChallenger, SerializingChallenger32};
 use p3_dft::Radix2DitParallel;
 use p3_field::PrimeCharacteristicRing;
-use p3_hyperplonk::{HyperPlonkConfig, ProverInput, VerifierInput, keygen, prove, verify};
+use p3_hyperplonk::{keygen, prove, verify, HyperPlonkConfig, ProverInput, VerifierInput};
 use p3_keccak::Keccak256Hash;
-use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::Matrix;
 use p3_whir::{
     FoldingFactor, KeccakNodeCompress, KeccakU32BeLeafHasher, ProtocolParameters,
     SecurityAssumption, WhirPcs,
@@ -17,9 +17,9 @@ use whir_p3::whir::proof::SumcheckData;
 mod evm_codec;
 
 use evm_codec::{
-    Challenge, DecodedProofBlob, HyperPlonkProof, Val, decode_proof_blob_v1,
-    decode_verify_bytes_calldata, encode_calldata_verify_bytes, encode_proof_blob_v1,
-    encode_proof_blob_v1_with_offsets, render_json_payload, verify_bytes_selector,
+    decode_proof_blob_v1, decode_verify_bytes_calldata, encode_calldata_verify_bytes,
+    encode_proof_blob_v1, encode_proof_blob_v1_with_offsets, render_json_payload,
+    verify_bytes_selector, Challenge, DecodedProofBlob, HyperPlonkProof, Val,
 };
 
 type FieldHash = KeccakU32BeLeafHasher;
@@ -184,7 +184,7 @@ fn calldata_and_json_mode_contract() {
     );
 
     let json = render_json_payload(&blob, &calldata, false);
-    assert!(json.contains("\"schema\":\"p3-hyperplonk-evm-proof-v1\""));
+    assert!(json.contains("\"schema\":\"p3-hyperplonk-evm-proof-v2\""));
     assert!(json.contains("\"verify_function\":\"verify(bytes)\""));
     assert!(json.contains(&format!("\"proof_bytes_len\":{}", blob.len())));
     assert!(json.contains(&format!("\"calldata_len\":{}", calldata.len())));
@@ -251,20 +251,16 @@ fn option_roundtrip_stability_for_present_and_absent_sections_hyperplonk() {
     let with_options_blob = encode_proof_blob_v1(&with_options.public_inputs, &with_options.proof);
     let with_options_decoded =
         decode_proof_blob_v1(&with_options_blob).expect("decode with options failed");
-    assert!(
-        with_options_decoded
-            .proof
-            .pcs
-            .iter()
-            .all(|pcs| pcs.final_poly.is_some())
-    );
-    assert!(
-        with_options_decoded
-            .proof
-            .pcs
-            .iter()
-            .all(|pcs| pcs.final_sumcheck.is_some())
-    );
+    assert!(with_options_decoded
+        .proof
+        .pcs
+        .iter()
+        .all(|pcs| pcs.final_poly.is_some()));
+    assert!(with_options_decoded
+        .proof
+        .pcs
+        .iter()
+        .all(|pcs| pcs.final_sumcheck.is_some()));
     let with_options_reencoded = encode_proof_blob_v1(
         &with_options_decoded.public_inputs,
         &with_options_decoded.proof,
@@ -282,20 +278,16 @@ fn option_roundtrip_stability_for_present_and_absent_sections_hyperplonk() {
         encode_proof_blob_v1(&without_options.public_inputs, &without_options.proof);
     let without_options_decoded =
         decode_proof_blob_v1(&without_options_blob).expect("decode without options failed");
-    assert!(
-        without_options_decoded
-            .proof
-            .pcs
-            .iter()
-            .all(|pcs| pcs.final_poly.is_none())
-    );
-    assert!(
-        without_options_decoded
-            .proof
-            .pcs
-            .iter()
-            .all(|pcs| pcs.final_sumcheck.is_none())
-    );
+    assert!(without_options_decoded
+        .proof
+        .pcs
+        .iter()
+        .all(|pcs| pcs.final_poly.is_none()));
+    assert!(without_options_decoded
+        .proof
+        .pcs
+        .iter()
+        .all(|pcs| pcs.final_sumcheck.is_none()));
     let without_options_reencoded = encode_proof_blob_v1(
         &without_options_decoded.public_inputs,
         &without_options_decoded.proof,
