@@ -1,11 +1,19 @@
-use alloc::vec;
 use alloc::vec::Vec;
 
 use p3_field::{PackedValue, PrimeField32};
 use p3_keccak::Keccak256Hash;
 use p3_symmetric::{CryptographicHasher, PseudoCompressionFunction};
+use whir_p3::metrics::{add_leaf_hash_call, add_node_hash_call};
 
 pub const KECCAK_DIGEST_ELEMS: usize = 4;
+
+#[inline]
+fn maybe_push_leaf_prefix(_buf: &mut Vec<u8>) {
+    #[cfg(not(feature = "keccak_no_prefix"))]
+    {
+        _buf.push(0x00);
+    }
+}
 
 pub fn digest_u64_to_bytes32(digest: &[u64; KECCAK_DIGEST_ELEMS]) -> [u8; 32] {
     let mut out = [0u8; 32];
@@ -42,13 +50,14 @@ where
             let elems_per_packed = first.as_slice().len();
             let (lower, _) = iter.size_hint();
             let mut buf = Vec::with_capacity(1 + (lower + 1) * elems_per_packed * 4);
-            buf.push(0x00);
+            maybe_push_leaf_prefix(&mut buf);
             for &x in first.as_slice() {
                 buf.extend_from_slice(&x.as_canonical_u32().to_be_bytes());
             }
             buf
         } else {
-            let buf = vec![0x00];
+            let mut buf = Vec::new();
+            maybe_push_leaf_prefix(&mut buf);
             buf
         };
 
@@ -57,6 +66,7 @@ where
                 preimage.extend_from_slice(&x.as_canonical_u32().to_be_bytes());
             }
         }
+        add_leaf_hash_call();
         let bytes: [u8; 32] = Keccak256Hash.hash_iter(preimage);
         digest_bytes32_to_u64(&bytes)
     }
@@ -67,10 +77,14 @@ pub struct KeccakNodeCompress;
 
 impl PseudoCompressionFunction<[u64; KECCAK_DIGEST_ELEMS], 2> for KeccakNodeCompress {
     fn compress(&self, input: [[u64; KECCAK_DIGEST_ELEMS]; 2]) -> [u64; KECCAK_DIGEST_ELEMS] {
-        let prefix = [0x01u8];
         let left = digest_u64_to_bytes32(&input[0]);
         let right = digest_u64_to_bytes32(&input[1]);
-        let bytes: [u8; 32] = Keccak256Hash.hash_iter_slices([&prefix[..], &left[..], &right[..]]);
+        add_node_hash_call();
+        #[cfg(feature = "keccak_no_prefix")]
+        let bytes: [u8; 32] = Keccak256Hash.hash_iter_slices([&left[..], &right[..]]);
+        #[cfg(not(feature = "keccak_no_prefix"))]
+        let bytes: [u8; 32] =
+            Keccak256Hash.hash_iter_slices([&[0x01u8][..], &left[..], &right[..]]);
         digest_bytes32_to_u64(&bytes)
     }
 }

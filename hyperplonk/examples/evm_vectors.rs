@@ -1,21 +1,18 @@
-#[path = "../src/evm_codec.rs"]
-mod evm_codec;
-
 use std::io::Write;
 use std::path::PathBuf;
 
 use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithPublicValues};
-use p3_hyperplonk::{HyperPlonkConfig, ProverInput, keygen, prove};
+use p3_hyperplonk::evm_codec::{
+    Challenge, Challenger, Compress, Dft, FieldHash, Pcs, Val, encode_calldata_verify_bytes,
+    encode_proof_blob_v2, hex_prefixed, render_json_payload_with_metrics,
+};
+use p3_hyperplonk::{HyperPlonkConfig, ProverInput, VerifierInput, keygen, prove, verify};
 use p3_koala_bear::GenericPoseidon2LinearLayersKoalaBear;
 use p3_poseidon2_air::{RoundConstants, generate_trace_rows, num_cols};
 use p3_whir::{FoldingFactor, ProtocolParameters, SecurityAssumption};
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
-
-use crate::evm_codec::{
-    Challenge, Challenger, Compress, Dft, FieldHash, Pcs, Val, encode_calldata_verify_bytes,
-    encode_proof_blob_v1, render_json_payload,
-};
+use whir_p3::metrics::{reset_hash_counters, snapshot_hash_counters};
 
 type LinearLayers = GenericPoseidon2LinearLayersKoalaBear;
 
@@ -161,7 +158,7 @@ fn run() -> Result<(), String> {
     let round_constants = RoundConstants::from_rng(&mut rng);
     let make_air = || Poseidon2Air(p3_poseidon2_air::Poseidon2Air::new(round_constants.clone()));
     let air = make_air();
-    let (_vk, pk) = keygen([&air]);
+    let (vk, pk) = keygen([&air]);
 
     let log_b = 15;
     let trace = generate_trace_rows::<
@@ -183,14 +180,32 @@ fn run() -> Result<(), String> {
         .iter()
         .map(|input| input.public_values.clone())
         .collect::<Vec<_>>();
+    reset_hash_counters();
     let proof = prove(&config, &pk, prover_inputs);
+    let hash_counts_prover = snapshot_hash_counters();
 
-    let proof_blob = encode_proof_blob_v1(&public_inputs, &proof);
+    let verifier_inputs = public_inputs
+        .iter()
+        .cloned()
+        .map(|public_values| VerifierInput::new(make_air(), public_values))
+        .collect::<Vec<_>>();
+    reset_hash_counters();
+    verify(&config, &vk, verifier_inputs, &proof)
+        .map_err(|err| format!("generated proof failed verification: {err:?}"))?;
+    let hash_counts_verifier = snapshot_hash_counters();
+
+    let proof_blob = encode_proof_blob_v2(&public_inputs, &proof);
     let calldata = encode_calldata_verify_bytes(&proof_blob);
 
     let output = match cli.format {
-        OutputFormat::Json => render_json_payload(&proof_blob, &calldata, cli.pretty),
-        OutputFormat::Calldata => evm_codec::hex_prefixed(&calldata),
+        OutputFormat::Json => render_json_payload_with_metrics(
+            &proof_blob,
+            &calldata,
+            hash_counts_prover.into(),
+            hash_counts_verifier.into(),
+            cli.pretty,
+        ),
+        OutputFormat::Calldata => hex_prefixed(&calldata),
     };
 
     match cli.out {
