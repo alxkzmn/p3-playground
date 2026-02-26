@@ -6,6 +6,7 @@ use p3_symmetric::{CryptographicHasher, PseudoCompressionFunction};
 use whir_p3::metrics::{add_leaf_hash_call, add_node_hash_call};
 
 pub const KECCAK_DIGEST_ELEMS: usize = 4;
+const KECCAK_DIGEST_BYTES: usize = 32;
 
 #[inline]
 fn maybe_push_leaf_prefix(_buf: &mut Vec<u8>) {
@@ -13,6 +14,36 @@ fn maybe_push_leaf_prefix(_buf: &mut Vec<u8>) {
     {
         _buf.push(0x00);
     }
+}
+
+#[must_use]
+pub const fn effective_digest_bytes_for_security_bits(security_bits: usize) -> usize {
+    let bits = security_bits.saturating_mul(2);
+    let bytes = (bits + 7) / 8;
+    if bytes == 0 {
+        1
+    } else if bytes > KECCAK_DIGEST_BYTES {
+        KECCAK_DIGEST_BYTES
+    } else {
+        bytes
+    }
+}
+
+#[inline]
+const fn clamp_effective_digest_bytes(effective_digest_bytes: usize) -> usize {
+    if effective_digest_bytes == 0 {
+        1
+    } else if effective_digest_bytes > KECCAK_DIGEST_BYTES {
+        KECCAK_DIGEST_BYTES
+    } else {
+        effective_digest_bytes
+    }
+}
+
+#[inline]
+fn mask_digest_tail(bytes: &mut [u8; KECCAK_DIGEST_BYTES], effective_digest_bytes: usize) {
+    let keep = clamp_effective_digest_bytes(effective_digest_bytes);
+    bytes[keep..].fill(0);
 }
 
 pub fn digest_u64_to_bytes32(digest: &[u64; KECCAK_DIGEST_ELEMS]) -> [u8; 32] {
@@ -33,8 +64,35 @@ pub fn digest_bytes32_to_u64(bytes: &[u8; 32]) -> [u64; KECCAK_DIGEST_ELEMS] {
     out
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct KeccakU32BeLeafHasher;
+#[derive(Clone, Copy, Debug)]
+pub struct KeccakU32BeLeafHasher {
+    effective_digest_bytes: usize,
+}
+
+impl KeccakU32BeLeafHasher {
+    #[must_use]
+    pub const fn new(effective_digest_bytes: usize) -> Self {
+        Self {
+            effective_digest_bytes,
+        }
+    }
+
+    #[must_use]
+    pub const fn for_security_bits(security_bits: usize) -> Self {
+        Self::new(effective_digest_bytes_for_security_bits(security_bits))
+    }
+
+    #[must_use]
+    pub const fn effective_digest_bytes(&self) -> usize {
+        clamp_effective_digest_bytes(self.effective_digest_bytes)
+    }
+}
+
+impl Default for KeccakU32BeLeafHasher {
+    fn default() -> Self {
+        Self::new(KECCAK_DIGEST_BYTES)
+    }
+}
 
 impl<P> CryptographicHasher<P, [u64; KECCAK_DIGEST_ELEMS]> for KeccakU32BeLeafHasher
 where
@@ -67,13 +125,41 @@ where
             }
         }
         add_leaf_hash_call();
-        let bytes: [u8; 32] = Keccak256Hash.hash_iter(preimage);
+        let mut bytes: [u8; 32] = Keccak256Hash.hash_iter(preimage);
+        mask_digest_tail(&mut bytes, self.effective_digest_bytes());
         digest_bytes32_to_u64(&bytes)
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct KeccakNodeCompress;
+#[derive(Clone, Copy, Debug)]
+pub struct KeccakNodeCompress {
+    effective_digest_bytes: usize,
+}
+
+impl KeccakNodeCompress {
+    #[must_use]
+    pub const fn new(effective_digest_bytes: usize) -> Self {
+        Self {
+            effective_digest_bytes,
+        }
+    }
+
+    #[must_use]
+    pub const fn for_security_bits(security_bits: usize) -> Self {
+        Self::new(effective_digest_bytes_for_security_bits(security_bits))
+    }
+
+    #[must_use]
+    pub const fn effective_digest_bytes(&self) -> usize {
+        clamp_effective_digest_bytes(self.effective_digest_bytes)
+    }
+}
+
+impl Default for KeccakNodeCompress {
+    fn default() -> Self {
+        Self::new(KECCAK_DIGEST_BYTES)
+    }
+}
 
 impl PseudoCompressionFunction<[u64; KECCAK_DIGEST_ELEMS], 2> for KeccakNodeCompress {
     fn compress(&self, input: [[u64; KECCAK_DIGEST_ELEMS]; 2]) -> [u64; KECCAK_DIGEST_ELEMS] {
@@ -81,10 +167,25 @@ impl PseudoCompressionFunction<[u64; KECCAK_DIGEST_ELEMS], 2> for KeccakNodeComp
         let right = digest_u64_to_bytes32(&input[1]);
         add_node_hash_call();
         #[cfg(feature = "keccak_no_prefix")]
-        let bytes: [u8; 32] = Keccak256Hash.hash_iter_slices([&left[..], &right[..]]);
+        let mut bytes: [u8; 32] = Keccak256Hash.hash_iter_slices([&left[..], &right[..]]);
         #[cfg(not(feature = "keccak_no_prefix"))]
-        let bytes: [u8; 32] =
+        let mut bytes: [u8; 32] =
             Keccak256Hash.hash_iter_slices([&[0x01u8][..], &left[..], &right[..]]);
+        mask_digest_tail(&mut bytes, self.effective_digest_bytes());
         digest_bytes32_to_u64(&bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::effective_digest_bytes_for_security_bits;
+
+    #[test]
+    fn effective_digest_bytes_security_mapping() {
+        assert_eq!(effective_digest_bytes_for_security_bits(0), 1);
+        assert_eq!(effective_digest_bytes_for_security_bits(80), 20);
+        assert_eq!(effective_digest_bytes_for_security_bits(100), 25);
+        assert_eq!(effective_digest_bytes_for_security_bits(128), 32);
+        assert_eq!(effective_digest_bytes_for_security_bits(200), 32);
     }
 }

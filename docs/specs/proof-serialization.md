@@ -1,52 +1,53 @@
-# HyperPlonk EVM Proof Serialization v2
+# HyperPlonk EVM Proof Serialization (v1/v2/v3)
 
-This document defines the canonical wire format emitted by `evm_vectors` for on-chain verification.
+This document defines HyperPlonk EVM proof blob formats used by `evm_vectors`.
+
+## Version semantics
+
+- `v1`: explicit legacy format.
+- `v2`: compact format with full `bytes32` Merkle digests.
+- `v3`: compact format with masked/truncated Merkle digests.
+
+`evm_vectors` now emits `v3` by default.
 
 ## Goals
 
-- Keep calldata minimal for `verify(bytes)` calls.
-- Preserve deterministic encoding and strict decoding.
-- Keep decode compatibility for legacy v1 vectors.
-
-## Outputs
-
-The example supports two output modes:
-
-1. `json` (default): metadata + proof blob + wallet-ready calldata.
-2. `calldata`: wallet-ready transaction data for `verify(bytes)`.
+- Minimize calldata bytes for `verify(bytes)`.
+- Keep deterministic encoding and strict decoding.
+- Preserve explicit legacy decode paths for test fixtures.
 
 ## Fixed verifier entrypoint
 
-- Function signature: `verify(bytes)`
-- Calldata format: `selector || abi.encode(bytes proof_blob)`
-- `selector` is the first 4 bytes of `keccak256("verify(bytes)")`.
+- Function signature: `verify(bytes)`.
+- Calldata format: `selector || abi.encode(bytes proof_blob)`.
+- `selector = keccak256("verify(bytes)")[0..4]`.
 
-## JSON schema (`p3-hyperplonk-evm-proof-v2`)
+## JSON payload
 
-```json
-{
-  "schema": "p3-hyperplonk-evm-proof-v2",
-  "verify_function": "verify(bytes)",
-  "selector": "0x....",
-  "keccak_mode": "prefixed|no_prefix",
-  "proof_bytes": "0x....",
-  "proof_bytes_len": 0,
-  "calldata": "0x....",
-  "calldata_len": 0,
-  "hash_counts_prover": { "leaf_hash_calls": 0, "node_hash_calls": 0 },
-  "hash_counts_verifier": { "leaf_hash_calls": 0, "node_hash_calls": 0 },
-  "hash_counts_total": { "leaf_hash_calls": 0, "node_hash_calls": 0 }
-}
-```
+Schema values:
+
+- `v1`: `p3-hyperplonk-evm-proof-v1`
+- `v2`: `p3-hyperplonk-evm-proof-v2`
+- `v3`: `p3-hyperplonk-evm-proof-v3`
+
+Rendered JSON includes:
+
+- `proof_blob_version`
+- `keccak_mode`
+- `masked_digest_bytes`
+- `masked_digest_bits`
+- `total_merkle_digest_count`
+- `proof_bytes` and `proof_bytes_len`
+- `calldata` and `calldata_len`
+- `calldata_gas_estimate`
+- `hash_counts_prover`, `hash_counts_verifier`, `hash_counts_total`
 
 ## Binary proof blob
 
 ### Envelope
 
 - `magic[4] = "HPK1"`
-- `version:u8`
-  - `2` => v2 compact query-batch encoding (default for new vectors)
-  - `1` => legacy v1 encoding (still decodable)
+- `version:u8` (`1|2|3`)
 
 ### Public input section
 
@@ -57,7 +58,7 @@ The example supports two output modes:
 
 ### HyperPlonk proof section
 
-Encodes all verifier-required fields in this order:
+In order:
 
 1. `log_bs`
 2. `commitment`
@@ -67,21 +68,23 @@ Encodes all verifier-required fields in this order:
 
 ### WHIR proof section (per PCS proof)
 
-For each WHIR proof, encode:
+In order:
 
 1. `initial_commitment`
 2. `initial_ood_answers`
 3. `initial_sumcheck`
-4. `rounds`:
-   - `commitment`
-   - `ood_answers`
-   - `pow_witness`
-   - `query_batch`
-   - `sumcheck`
-5. `final_poly` (option tagged)
+4. `rounds[]`:
+
+- `commitment`
+- `ood_answers`
+- `pow_witness`
+- `query_batch`
+- `sumcheck`
+
+5. `final_poly` (option-tagged)
 6. `final_pow_witness`
 7. `final_query_batch`
-8. `final_sumcheck` (option tagged)
+8. `final_sumcheck` (option-tagged)
 
 ## Query-batch encoding
 
@@ -90,48 +93,59 @@ For each WHIR proof, encode:
 - `query_kind:u8` (`0=base`, `1=extension`)
 - `query_count:varuint`
 - `row_width:varuint`
-- `values_flat` (`query_count * row_width`)
+- `values_flat`
 - `decommit_count:varuint`
-- `decommitments[decommit_count]:digest`
+- `decommitments[decommit_count]`
 
-### v2 (compact, default)
+### v2 and v3 (compact)
 
-- `values_flat` only
-- `decommitments` only
-- The following are not serialized in v2:
-  - `query_kind`
-  - `query_count`
-  - `row_width`
-  - `decommit_count`
+Only payload arrays are encoded:
 
-In v2, query shape is derived from transcript/protocol round context (same design intent as old `whir-verifier` / `sol-whir` flow).
+- `values_flat`
+- `decommitments`
+
+Not encoded in compact modes:
+
+- `query_kind`
+- `query_count`
+- `row_width`
+- `decommit_count`
+
+Decoder derives query shape from transcript/protocol round context.
+
+## Digest encoding by version
+
+- `v1`, `v2`: Merkle digests serialized as full 32 bytes.
+- `v3`: Merkle digests serialized as `effective_digest_bytes` and zero-padded back to 32 bytes during decode.
+
+`effective_digest_bytes` is security-coupled (`ceil(2 * security_bits / 8)`, clamped to `[1,32]`).
 
 ## Primitive encodings
 
-- `varuint`: canonical unsigned LEB128 (minimal representation only).
-- `base_field` (`KoalaBear`): 4-byte big-endian canonical limb.
-- `extension_field` (`BinomialExtensionField<_,4>`): 4 base limbs in order, each 4-byte big-endian.
-- `digest`: bytes32 canonical map of `[u64;4]`.
-- `option`: 1-byte tag (`0=None`, `1=Some`) plus payload for `Some`.
+- `varuint`: canonical unsigned LEB128 (minimal only).
+- `base_field` (`KoalaBear`): 4-byte big-endian limb.
+- `extension_field` (`BinomialExtensionField<_,4>`): 4 base limbs.
+- `option`: `0=None`, `1=Some` + payload.
 
-## Strict decoding rules
+## Strict decode rules
 
-Decoders MUST reject:
+Decoders reject:
 
-- unsupported `version`,
-- trailing bytes after top-level proof payload,
-- non-canonical varuint encoding,
-- unknown enum/option tags,
-- malformed ABI calldata (`verify(bytes)` selector mismatch, bad offset/length/padding),
-- malformed `final_poly` lengths (must be power-of-two when present),
-- v2 payloads where decoded element counts do not match derived query shape.
+- unsupported `version`
+- missing required context for compact decode
+- non-canonical varuint
+- malformed enum/option tags
+- malformed ABI wrapper for `verify(bytes)`
+- malformed `final_poly` lengths (must be power-of-two if present)
+- compact payload lengths that do not match derived shape
+- malformed/truncated digest payloads
+- trailing bytes
 
-## Compatibility guidance
+## Solidity follow-up for v3
 
-- New vectors should be emitted as v2.
-- v1 decode remains supported for legacy artifacts and regression tests.
+`v3` requires on-chain parser/verifier support for truncated digest bytes, with zero-padding to `bytes32` before hash checks. This cycle does not modify `/Users/alexkuzmin/development/zkid-benchmarks/sol-whir`.
 
-## TODO (deferred optimization)
+## Deferred TODO
 
-- Replace per-query `open_batch` extraction in multiproof assembly with an `open_multi` / layer-access path.
-- Expected effect: lower prover CPU and RAM overhead in multiproof construction without changing proof semantics.
+- Avoid per-query `open_batch` extraction during multiproof assembly (move toward multi-open/layer access).
+- Target effect: reduce prover CPU/RAM overhead without proof semantic changes.

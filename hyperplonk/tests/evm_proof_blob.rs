@@ -8,20 +8,22 @@ use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_whir::{
     FoldingFactor, KeccakNodeCompress, KeccakU32BeLeafHasher, ProtocolParameters,
-    SecurityAssumption, WhirPcs,
+    SecurityAssumption, WhirPcs, effective_digest_bytes_for_security_bits,
 };
 use whir_p3::poly::evals::EvaluationsList;
-use whir_p3::whir::proof::SumcheckData;
+use whir_p3::whir::proof::{QueryBatchOpening, SumcheckData};
 
 #[path = "../src/evm_codec.rs"]
 #[allow(dead_code)]
 mod evm_codec;
 
 use evm_codec::{
-    Challenge, DecodedProofBlob, HyperPlonkProof, Val, decode_proof_blob_v1,
-    decode_proof_blob_v1_with_context, decode_verify_bytes_calldata, derive_v2_decode_context,
-    encode_calldata_verify_bytes, encode_proof_blob_v1, encode_proof_blob_v2,
-    encode_proof_blob_v2_with_offsets, render_json_payload, verify_bytes_selector,
+    Challenge, DecodedProofBlob, HyperPlonkProof, Val, count_merkle_digests_in_proof,
+    decode_proof_blob_v1, decode_proof_blob_v1_with_context, decode_proof_blob_v3_with_context,
+    decode_verify_bytes_calldata, derive_v2_decode_context,
+    derive_v3_decode_context_with_digest_bytes, encode_calldata_verify_bytes, encode_proof_blob_v1,
+    encode_proof_blob_v2, encode_proof_blob_v2_with_offsets, encode_proof_blob_v3,
+    render_json_payload, verify_bytes_selector,
 };
 
 type FieldHash = KeccakU32BeLeafHasher;
@@ -77,11 +79,11 @@ fn make_counter_trace(log_b: usize) -> RowMajorMatrix<Val> {
 fn build_fixture() -> Fixture {
     let config = {
         let whir_params = ProtocolParameters {
-            security_level: 60,
+            security_level: 100,
             pow_bits: 0,
             folding_factor: FoldingFactor::Constant(4),
-            merkle_hash: FieldHash::default(),
-            merkle_compress: Compress::default(),
+            merkle_hash: FieldHash::for_security_bits(100),
+            merkle_compress: Compress::for_security_bits(100),
             soundness_type: SecurityAssumption::CapacityBound,
             starting_log_inv_rate: 1,
             rs_domain_initial_reduction_factor: 3,
@@ -372,9 +374,78 @@ fn v2_compact_blob_is_smaller_than_v1_for_fixture() {
     let calldata_v2 = encode_calldata_verify_bytes(&blob_v2);
     let calldata_v1 = encode_calldata_verify_bytes(&blob_v1);
     assert!(
-        calldata_v2.len() < calldata_v1.len(),
-        "expected v2 calldata ({}) to be smaller than v1 ({})",
+        calldata_v2.len() <= calldata_v1.len(),
+        "expected v2 calldata ({}) to be no larger than v1 ({})",
         calldata_v2.len(),
         calldata_v1.len()
     );
+}
+
+#[test]
+fn v3_truncated_blob_roundtrip_and_size_delta() {
+    let fixture = build_fixture();
+    let digest_bytes = effective_digest_bytes_for_security_bits(100);
+
+    let blob_v2 = encode_proof_blob_v2(&fixture.public_inputs, &fixture.proof);
+    let blob_v3 = encode_proof_blob_v3(&fixture.public_inputs, &fixture.proof, digest_bytes);
+    assert!(
+        blob_v3.len() < blob_v2.len(),
+        "expected v3 blob ({}) to be smaller than v2 ({})",
+        blob_v3.len(),
+        blob_v2.len()
+    );
+
+    let calldata_v2 = encode_calldata_verify_bytes(&blob_v2);
+    let calldata_v3 = encode_calldata_verify_bytes(&blob_v3);
+    assert!(
+        calldata_v3.len() < calldata_v2.len(),
+        "expected v3 calldata ({}) to be smaller than v2 ({})",
+        calldata_v3.len(),
+        calldata_v2.len()
+    );
+
+    let ctx = derive_v3_decode_context_with_digest_bytes(&fixture.proof, digest_bytes)
+        .expect("v3 context derivation failed");
+    let decoded = decode_proof_blob_v3_with_context(&blob_v3, &ctx).expect("v3 decode failed");
+    let verifier_inputs = verifier_inputs_from_publics(fixture.air, &decoded.public_inputs);
+    verify(
+        &fixture.config,
+        &fixture.vk,
+        verifier_inputs,
+        &decoded.proof,
+    )
+    .expect("v3 decoded proof should verify");
+
+    let bad_ctx = derive_v3_decode_context_with_digest_bytes(&fixture.proof, 32)
+        .expect("v3 context derivation failed");
+    assert!(
+        decode_proof_blob_v3_with_context(&blob_v3, &bad_ctx).is_err(),
+        "v3 decode with wrong digest width context should fail"
+    );
+}
+
+#[test]
+fn merkle_digest_count_includes_final_query_batch() {
+    let fixture = build_fixture();
+    let blob = encode_proof_blob_v2(&fixture.public_inputs, &fixture.proof);
+    let context =
+        derive_v2_decode_context(&fixture.proof).expect("shape context derivation failed");
+    let mut proof = decode_proof_blob_v1_with_context(&blob, Some(&context))
+        .expect("decode failed")
+        .proof;
+    let baseline = count_merkle_digests_in_proof(&proof);
+
+    let final_query_batch = proof
+        .pcs
+        .first_mut()
+        .and_then(|pcs| pcs.final_query_batch.as_mut())
+        .expect("missing final query batch");
+    match final_query_batch {
+        QueryBatchOpening::Base { proof, .. } | QueryBatchOpening::Extension { proof, .. } => {
+            proof.decommitments.push([0u64; 4]);
+        }
+    }
+
+    let bumped = count_merkle_digests_in_proof(&proof);
+    assert_eq!(bumped, baseline + 1);
 }

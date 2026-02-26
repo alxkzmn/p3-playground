@@ -3,8 +3,10 @@ use std::path::PathBuf;
 
 use p3_air::{Air, AirBuilder, BaseAir, BaseAirWithPublicValues};
 use p3_hyperplonk::evm_codec::{
-    Challenge, Challenger, Compress, Dft, FieldHash, Pcs, Val, encode_calldata_verify_bytes,
-    encode_proof_blob_v2, hex_prefixed, render_json_payload_with_metrics,
+    Challenge, Challenger, Compress, Dft, FieldHash, MerkleJsonMetrics, Pcs, Val,
+    count_merkle_digests_in_proof, effective_digest_bytes_for_v3_security_bits,
+    encode_calldata_verify_bytes, encode_proof_blob_v3, hex_prefixed,
+    render_json_payload_with_metrics_and_merkle,
 };
 use p3_hyperplonk::{HyperPlonkConfig, ProverInput, VerifierInput, keygen, prove, verify};
 use p3_koala_bear::GenericPoseidon2LinearLayersKoalaBear;
@@ -21,6 +23,7 @@ const SBOX_DEGREE: u64 = 3;
 const SBOX_REGISTERS: usize = 0;
 const HALF_FULL_ROUNDS: usize = 4;
 const PARTIAL_ROUNDS: usize = 20;
+const SECURITY_LEVEL: usize = 100;
 
 pub struct Poseidon2Air(
     p3_poseidon2_air::Poseidon2Air<
@@ -137,14 +140,13 @@ fn run() -> Result<(), String> {
 
     let config = {
         let dft = Dft::default();
-        let security_level = 100;
         let pow_bits = 20;
         let whir_params = ProtocolParameters {
-            security_level,
+            security_level: SECURITY_LEVEL,
             pow_bits,
             folding_factor: FoldingFactor::Constant(4),
-            merkle_hash: FieldHash::default(),
-            merkle_compress: Compress::default(),
+            merkle_hash: FieldHash::for_security_bits(SECURITY_LEVEL),
+            merkle_compress: Compress::for_security_bits(SECURITY_LEVEL),
             soundness_type: SecurityAssumption::CapacityBound,
             starting_log_inv_rate: 1,
             rs_domain_initial_reduction_factor: 3,
@@ -194,15 +196,23 @@ fn run() -> Result<(), String> {
         .map_err(|err| format!("generated proof failed verification: {err:?}"))?;
     let hash_counts_verifier = snapshot_hash_counters();
 
-    let proof_blob = encode_proof_blob_v2(&public_inputs, &proof);
+    let masked_digest_bytes = effective_digest_bytes_for_v3_security_bits(SECURITY_LEVEL);
+    let masked_digest_bits = masked_digest_bytes.saturating_mul(8);
+    let total_merkle_digest_count = count_merkle_digests_in_proof(&proof);
+    let proof_blob = encode_proof_blob_v3(&public_inputs, &proof, masked_digest_bytes);
     let calldata = encode_calldata_verify_bytes(&proof_blob);
 
     let output = match cli.format {
-        OutputFormat::Json => render_json_payload_with_metrics(
+        OutputFormat::Json => render_json_payload_with_metrics_and_merkle(
             &proof_blob,
             &calldata,
             hash_counts_prover.into(),
             hash_counts_verifier.into(),
+            MerkleJsonMetrics {
+                masked_digest_bytes,
+                masked_digest_bits,
+                total_merkle_digest_count,
+            },
             cli.pretty,
         ),
         OutputFormat::Calldata => hex_prefixed(&calldata),
