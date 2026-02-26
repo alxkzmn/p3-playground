@@ -36,6 +36,9 @@ Rendered JSON includes:
 - `keccak_mode`
 - `masked_digest_bytes`
 - `masked_digest_bits`
+- `merkle_security_bits`
+- `merkle_security_bits_override`
+- `merkle_override_weaker_than_security`
 - `total_merkle_digest_count`
 - `proof_bytes` and `proof_bytes_len`
 - `calldata` and `calldata_len`
@@ -119,6 +122,20 @@ Decoder derives query shape from transcript/protocol round context.
 - `v3`: Merkle digests serialized as `effective_digest_bytes` and zero-padded back to 32 bytes during decode.
 
 `effective_digest_bytes` is security-coupled (`ceil(2 * security_bits / 8)`, clamped to `[1,32]`).
+
+## Manual Merkle override
+
+`evm_vectors` supports `--merkle-security-bits <usize>`.
+
+Resolved Merkle masking security is:
+
+- `merkle_security_bits = merkle_security_bits_override.unwrap_or(security_bits)`
+
+Digest width is then:
+
+- `effective_digest_bytes = ceil(2 * merkle_security_bits / 8)` (clamped to `[1,32]`)
+
+This override is a research knob and may reduce Merkle binding security below global protocol security. No wire-format change is introduced by this override.
 
 ## Primitive encodings
 

@@ -29,6 +29,17 @@ pub const fn effective_digest_bytes_for_security_bits(security_bits: usize) -> u
     }
 }
 
+#[must_use]
+pub const fn resolve_effective_merkle_security_bits(
+    security_bits: usize,
+    merkle_security_bits_override: Option<usize>,
+) -> usize {
+    match merkle_security_bits_override {
+        Some(bits) => bits,
+        None => security_bits,
+    }
+}
+
 #[inline]
 const fn clamp_effective_digest_bytes(effective_digest_bytes: usize) -> usize {
     if effective_digest_bytes == 0 {
@@ -178,7 +189,7 @@ impl PseudoCompressionFunction<[u64; KECCAK_DIGEST_ELEMS], 2> for KeccakNodeComp
 
 #[cfg(test)]
 mod tests {
-    use super::effective_digest_bytes_for_security_bits;
+    use super::{effective_digest_bytes_for_security_bits, resolve_effective_merkle_security_bits};
 
     #[test]
     fn effective_digest_bytes_security_mapping() {
@@ -187,5 +198,12 @@ mod tests {
         assert_eq!(effective_digest_bytes_for_security_bits(100), 25);
         assert_eq!(effective_digest_bytes_for_security_bits(128), 32);
         assert_eq!(effective_digest_bytes_for_security_bits(200), 32);
+    }
+
+    #[test]
+    fn resolve_effective_merkle_security_bits_mapping() {
+        assert_eq!(resolve_effective_merkle_security_bits(128, None), 128);
+        assert_eq!(resolve_effective_merkle_security_bits(128, Some(100)), 100);
+        assert_eq!(resolve_effective_merkle_security_bits(128, Some(80)), 80);
     }
 }

@@ -9,6 +9,7 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_whir::{
     FoldingFactor, KeccakNodeCompress, KeccakU32BeLeafHasher, ProtocolParameters,
     SecurityAssumption, WhirPcs, effective_digest_bytes_for_security_bits,
+    resolve_effective_merkle_security_bits,
 };
 use whir_p3::poly::evals::EvaluationsList;
 use whir_p3::whir::proof::{QueryBatchOpening, SumcheckData};
@@ -76,14 +77,19 @@ fn make_counter_trace(log_b: usize) -> RowMajorMatrix<Val> {
     RowMajorMatrix::new_col((0..rows).map(Val::from_usize).collect())
 }
 
-fn build_fixture() -> Fixture {
+fn build_fixture_with_security_and_merkle_override(
+    security_bits: usize,
+    merkle_security_bits_override: Option<usize>,
+) -> Fixture {
+    let effective_merkle_security_bits =
+        resolve_effective_merkle_security_bits(security_bits, merkle_security_bits_override);
     let config = {
         let whir_params = ProtocolParameters {
-            security_level: 100,
+            security_level: security_bits,
             pow_bits: 0,
             folding_factor: FoldingFactor::Constant(4),
-            merkle_hash: FieldHash::for_security_bits(100),
-            merkle_compress: Compress::for_security_bits(100),
+            merkle_hash: FieldHash::for_security_bits(effective_merkle_security_bits),
+            merkle_compress: Compress::for_security_bits(effective_merkle_security_bits),
             soundness_type: SecurityAssumption::CapacityBound,
             starting_log_inv_rate: 1,
             rs_domain_initial_reduction_factor: 3,
@@ -117,6 +123,10 @@ fn build_fixture() -> Fixture {
         public_inputs: vec![public_values],
         air,
     }
+}
+
+fn build_fixture() -> Fixture {
+    build_fixture_with_security_and_merkle_override(100, None)
 }
 
 fn verifier_inputs_from_publics(
@@ -385,6 +395,51 @@ fn v2_compact_blob_is_smaller_than_v1_for_fixture() {
 fn v3_truncated_blob_roundtrip_and_size_delta() {
     let fixture = build_fixture();
     let digest_bytes = effective_digest_bytes_for_security_bits(100);
+
+    let blob_v2 = encode_proof_blob_v2(&fixture.public_inputs, &fixture.proof);
+    let blob_v3 = encode_proof_blob_v3(&fixture.public_inputs, &fixture.proof, digest_bytes);
+    assert!(
+        blob_v3.len() < blob_v2.len(),
+        "expected v3 blob ({}) to be smaller than v2 ({})",
+        blob_v3.len(),
+        blob_v2.len()
+    );
+
+    let calldata_v2 = encode_calldata_verify_bytes(&blob_v2);
+    let calldata_v3 = encode_calldata_verify_bytes(&blob_v3);
+    assert!(
+        calldata_v3.len() < calldata_v2.len(),
+        "expected v3 calldata ({}) to be smaller than v2 ({})",
+        calldata_v3.len(),
+        calldata_v2.len()
+    );
+
+    let ctx = derive_v3_decode_context_with_digest_bytes(&fixture.proof, digest_bytes)
+        .expect("v3 context derivation failed");
+    let decoded = decode_proof_blob_v3_with_context(&blob_v3, &ctx).expect("v3 decode failed");
+    let verifier_inputs = verifier_inputs_from_publics(fixture.air, &decoded.public_inputs);
+    verify(
+        &fixture.config,
+        &fixture.vk,
+        verifier_inputs,
+        &decoded.proof,
+    )
+    .expect("v3 decoded proof should verify");
+
+    let bad_ctx = derive_v3_decode_context_with_digest_bytes(&fixture.proof, 32)
+        .expect("v3 context derivation failed");
+    assert!(
+        decode_proof_blob_v3_with_context(&blob_v3, &bad_ctx).is_err(),
+        "v3 decode with wrong digest width context should fail"
+    );
+}
+
+#[test]
+fn v3_truncated_blob_roundtrip_with_merkle_override_for_128_to_80() {
+    let fixture = build_fixture_with_security_and_merkle_override(128, Some(80));
+    let merkle_security_bits = resolve_effective_merkle_security_bits(128, Some(80));
+    let digest_bytes = effective_digest_bytes_for_security_bits(merkle_security_bits);
+    assert_eq!(digest_bytes, 20);
 
     let blob_v2 = encode_proof_blob_v2(&fixture.public_inputs, &fixture.proof);
     let blob_v3 = encode_proof_blob_v3(&fixture.public_inputs, &fixture.proof, digest_bytes);

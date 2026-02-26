@@ -74,6 +74,9 @@ pub struct MerkleJsonMetrics {
     pub masked_digest_bytes: usize,
     pub masked_digest_bits: usize,
     pub total_merkle_digest_count: usize,
+    pub merkle_security_bits: usize,
+    pub merkle_security_bits_override: Option<usize>,
+    pub merkle_override_weaker_than_security: bool,
 }
 
 #[must_use]
@@ -1425,7 +1428,7 @@ pub fn render_json_payload_with_metrics_and_merkle(
 
     if pretty {
         format!(
-            "{{\n  \"schema\": \"{}\",\n  \"proof_blob_version\": {},\n  \"verify_function\": \"{}\",\n  \"selector\": \"{}\",\n  \"keccak_mode\": \"{}\",\n  \"masked_digest_bytes\": {},\n  \"masked_digest_bits\": {},\n  \"total_merkle_digest_count\": {},\n  \"proof_bytes\": \"{}\",\n  \"proof_bytes_len\": {},\n  \"calldata\": \"{}\",\n  \"calldata_len\": {},\n  \"calldata_gas_estimate\": {},\n  \"hash_counts_prover\": {{ \"leaf_hash_calls\": {}, \"node_hash_calls\": {} }},\n  \"hash_counts_verifier\": {{ \"leaf_hash_calls\": {}, \"node_hash_calls\": {} }},\n  \"hash_counts_total\": {{ \"leaf_hash_calls\": {}, \"node_hash_calls\": {} }}\n}}\n",
+            "{{\n  \"schema\": \"{}\",\n  \"proof_blob_version\": {},\n  \"verify_function\": \"{}\",\n  \"selector\": \"{}\",\n  \"keccak_mode\": \"{}\",\n  \"masked_digest_bytes\": {},\n  \"masked_digest_bits\": {},\n  \"merkle_security_bits\": {},\n  \"merkle_security_bits_override\": {},\n  \"merkle_override_weaker_than_security\": {},\n  \"total_merkle_digest_count\": {},\n  \"proof_bytes\": \"{}\",\n  \"proof_bytes_len\": {},\n  \"calldata\": \"{}\",\n  \"calldata_len\": {},\n  \"calldata_gas_estimate\": {},\n  \"hash_counts_prover\": {{ \"leaf_hash_calls\": {}, \"node_hash_calls\": {} }},\n  \"hash_counts_verifier\": {{ \"leaf_hash_calls\": {}, \"node_hash_calls\": {} }},\n  \"hash_counts_total\": {{ \"leaf_hash_calls\": {}, \"node_hash_calls\": {} }}\n}}\n",
             schema,
             version,
             VERIFY_FUNCTION,
@@ -1433,6 +1436,11 @@ pub fn render_json_payload_with_metrics_and_merkle(
             keccak_mode_label(),
             merkle_metrics.masked_digest_bytes,
             merkle_metrics.masked_digest_bits,
+            merkle_metrics.merkle_security_bits,
+            merkle_metrics
+                .merkle_security_bits_override
+                .map_or(String::from("null"), |v| format!("{v}")),
+            merkle_metrics.merkle_override_weaker_than_security,
             merkle_metrics.total_merkle_digest_count,
             proof_hex,
             proof_blob.len(),
@@ -1448,7 +1456,7 @@ pub fn render_json_payload_with_metrics_and_merkle(
         )
     } else {
         format!(
-            "{{\"schema\":\"{}\",\"proof_blob_version\":{},\"verify_function\":\"{}\",\"selector\":\"{}\",\"keccak_mode\":\"{}\",\"masked_digest_bytes\":{},\"masked_digest_bits\":{},\"total_merkle_digest_count\":{},\"proof_bytes\":\"{}\",\"proof_bytes_len\":{},\"calldata\":\"{}\",\"calldata_len\":{},\"calldata_gas_estimate\":{},\"hash_counts_prover\":{{\"leaf_hash_calls\":{},\"node_hash_calls\":{}}},\"hash_counts_verifier\":{{\"leaf_hash_calls\":{},\"node_hash_calls\":{}}},\"hash_counts_total\":{{\"leaf_hash_calls\":{},\"node_hash_calls\":{}}}}}",
+            "{{\"schema\":\"{}\",\"proof_blob_version\":{},\"verify_function\":\"{}\",\"selector\":\"{}\",\"keccak_mode\":\"{}\",\"masked_digest_bytes\":{},\"masked_digest_bits\":{},\"merkle_security_bits\":{},\"merkle_security_bits_override\":{},\"merkle_override_weaker_than_security\":{},\"total_merkle_digest_count\":{},\"proof_bytes\":\"{}\",\"proof_bytes_len\":{},\"calldata\":\"{}\",\"calldata_len\":{},\"calldata_gas_estimate\":{},\"hash_counts_prover\":{{\"leaf_hash_calls\":{},\"node_hash_calls\":{}}},\"hash_counts_verifier\":{{\"leaf_hash_calls\":{},\"node_hash_calls\":{}}},\"hash_counts_total\":{{\"leaf_hash_calls\":{},\"node_hash_calls\":{}}}}}",
             schema,
             version,
             VERIFY_FUNCTION,
@@ -1456,6 +1464,11 @@ pub fn render_json_payload_with_metrics_and_merkle(
             keccak_mode_label(),
             merkle_metrics.masked_digest_bytes,
             merkle_metrics.masked_digest_bits,
+            merkle_metrics.merkle_security_bits,
+            merkle_metrics
+                .merkle_security_bits_override
+                .map_or(String::from("null"), |v| format!("{v}")),
+            merkle_metrics.merkle_override_weaker_than_security,
             merkle_metrics.total_merkle_digest_count,
             proof_hex,
             proof_blob.len(),
@@ -1542,8 +1555,7 @@ impl BlobWriter {
 
     fn write_digest(&mut self, digest: &[u64; 4]) {
         let bytes32 = digest_u64_to_bytes32(digest);
-        self.bytes
-            .extend_from_slice(&bytes32[..self.digest_bytes]);
+        self.bytes.extend_from_slice(&bytes32[..self.digest_bytes]);
     }
 
     fn write_option<T, F>(&mut self, value: &Option<T>, mut write_some: F)
