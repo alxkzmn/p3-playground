@@ -14,6 +14,8 @@ pub type Val<C> = <<C as HyperPlonkGenericConfig>::Pcs as MlPcs<
     <C as HyperPlonkGenericConfig>::Challenger,
 >>::Val;
 
+pub const DEFAULT_UNIVARIATE_SKIP_ROUNDS: usize = 6;
+
 pub trait HyperPlonkGenericConfig {
     /// The PCS used to commit to trace polynomials.
     type Pcs: MlPcs<Self::Challenge, Self::Challenger>;
@@ -31,6 +33,11 @@ pub trait HyperPlonkGenericConfig {
 
     /// Get an initialization of the challenger used by this proof configuration.
     fn initialize_challenger(&self) -> Self::Challenger;
+
+    /// Number of univariate skip rounds to use in the prover's AIR sumcheck path.
+    fn univariate_skip_rounds(&self) -> usize {
+        DEFAULT_UNIVARIATE_SKIP_ROUNDS
+    }
 }
 
 #[derive(Debug)]
@@ -39,6 +46,8 @@ pub struct HyperPlonkConfig<Pcs, Challenge, Challenger> {
     pcs: Pcs,
     /// An initialized instance of the challenger.
     challenger: Challenger,
+    /// Number of rounds to skip in univariate AIR sumcheck.
+    univariate_skip_rounds: usize,
     _phantom: PhantomData<Challenge>,
 }
 
@@ -47,8 +56,18 @@ impl<Pcs, Challenge, Challenger> HyperPlonkConfig<Pcs, Challenge, Challenger> {
         Self {
             pcs,
             challenger,
+            univariate_skip_rounds: DEFAULT_UNIVARIATE_SKIP_ROUNDS,
             _phantom: PhantomData,
         }
+    }
+
+    pub const fn with_univariate_skip_rounds(mut self, univariate_skip_rounds: usize) -> Self {
+        self.univariate_skip_rounds = univariate_skip_rounds;
+        self
+    }
+
+    pub const fn get_univariate_skip_rounds(&self) -> usize {
+        self.univariate_skip_rounds
     }
 }
 
@@ -72,5 +91,9 @@ where
 
     fn initialize_challenger(&self) -> Self::Challenger {
         self.challenger.clone()
+    }
+
+    fn univariate_skip_rounds(&self) -> usize {
+        self.univariate_skip_rounds
     }
 }
