@@ -89,6 +89,7 @@ fn bench(c: &mut Criterion) {
                         &[],
                         &[Default::default()],
                         Challenger::from_hasher(Vec::new(), Keccak256Hash {}),
+                        p3_hyperplonk::DEFAULT_UNIVARIATE_SKIP_ROUNDS,
                     )
                 },
                 BatchSize::LargeInput,

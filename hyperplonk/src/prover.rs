@@ -72,7 +72,13 @@ where
         let traces = (0..pk.metas().len())
             .map(|i| pcs.get_evaluations(&prover_data, i))
             .collect();
-        prove_piop(pk, &inputs, traces, &mut challenger)
+        prove_piop(
+            pk,
+            &inputs,
+            traces,
+            &mut challenger,
+            config.univariate_skip_rounds(),
+        )
     };
 
     let pcs = info_span!("open").in_scope(|| {
@@ -95,6 +101,7 @@ fn prove_piop<Val, Challenge, A>(
     inputs: &[VerifierInput<Val, A>],
     traces: Vec<impl Matrix<Val>>,
     mut challenger: impl FieldChallenger<Val>,
+    univariate_skip_rounds: usize,
 ) -> (Vec<Vec<Challenge>>, PiopProof<Challenge>)
 where
     Val: TwoAdicField + Ord,
@@ -138,6 +145,7 @@ where
         &gamma_powers,
         &claims_fs,
         &mut challenger,
+        univariate_skip_rounds,
     );
 
     (
@@ -300,6 +308,7 @@ pub fn prove_air<Val, Challenge, A>(
     gamma_powers: &[Challenge],
     claims_fs: &[EvalClaim<Challenge>],
     mut challenger: impl FieldChallenger<Val>,
+    univariate_skip_rounds: usize,
 ) -> (Vec<Vec<Challenge>>, AirProof<Challenge>)
 where
     Val: TwoAdicField + Ord,
@@ -311,10 +320,8 @@ where
     let skip_rounds = traces
         .iter()
         .map(|trace| {
-            // TODO: Find a better way to choose the optimal rounds to skip automatically.
-            const SKIP_ROUNDS: usize = 6;
-            if trace.log_b() >= SKIP_ROUNDS + log2_strict_usize(Val::Packing::WIDTH) {
-                SKIP_ROUNDS
+            if trace.log_b() >= univariate_skip_rounds + log2_strict_usize(Val::Packing::WIDTH) {
+                univariate_skip_rounds
             } else {
                 0
             }

@@ -81,6 +81,15 @@ fn build_fixture_with_security_and_merkle_override(
     security_bits: usize,
     merkle_security_bits_override: Option<usize>,
 ) -> Fixture {
+    build_fixture_with_params(security_bits, merkle_security_bits_override, 6, 8)
+}
+
+fn build_fixture_with_params(
+    security_bits: usize,
+    merkle_security_bits_override: Option<usize>,
+    univariate_skip_rounds: usize,
+    log_b: usize,
+) -> Fixture {
     let effective_merkle_security_bits =
         resolve_effective_merkle_security_bits(security_bits, merkle_security_bits_override);
     let config = {
@@ -98,12 +107,12 @@ fn build_fixture_with_security_and_merkle_override(
             Pcs::new(Dft::default(), whir_params),
             Challenger::from_hasher(Vec::new(), Keccak256Hash),
         )
+        .with_univariate_skip_rounds(univariate_skip_rounds)
     };
 
     let air = CounterAir;
     let (vk, pk) = keygen([&air]);
 
-    let log_b = 8;
     let trace = make_counter_trace(log_b);
     let public_values = vec![Val::from_usize((1 << log_b) - 1)];
 
@@ -503,4 +512,40 @@ fn merkle_digest_count_includes_final_query_batch() {
 
     let bumped = count_merkle_digests_in_proof(&proof);
     assert_eq!(bumped, baseline + 1);
+}
+
+#[test]
+fn prove_verify_with_skip_rounds_1_and_6() {
+    let fixture_skip_1 = build_fixture_with_params(100, None, 1, 8);
+    let verifier_inputs_1 =
+        verifier_inputs_from_publics(fixture_skip_1.air, &fixture_skip_1.public_inputs);
+    verify(
+        &fixture_skip_1.config,
+        &fixture_skip_1.vk,
+        verifier_inputs_1,
+        &fixture_skip_1.proof,
+    )
+    .expect("skip=1 proof should verify");
+
+    let fixture_skip_6 = build_fixture_with_params(100, None, 6, 8);
+    let verifier_inputs_6 =
+        verifier_inputs_from_publics(fixture_skip_6.air, &fixture_skip_6.public_inputs);
+    verify(
+        &fixture_skip_6.config,
+        &fixture_skip_6.vk,
+        verifier_inputs_6,
+        &fixture_skip_6.proof,
+    )
+    .expect("skip=6 proof should verify");
+}
+
+#[test]
+fn skip_rounds_embedded_in_proof_matches_config_when_log_b_allows() {
+    let requested_skip = 6usize;
+    let fixture = build_fixture_with_params(100, None, requested_skip, 8);
+    let proof_skip = fixture.proof.piop.air.univariate_skips[0].skip_rounds;
+    assert_eq!(
+        proof_skip, requested_skip,
+        "proof should embed configured skip rounds when trace log_b is large enough"
+    );
 }
