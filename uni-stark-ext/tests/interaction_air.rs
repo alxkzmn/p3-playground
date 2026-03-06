@@ -6,7 +6,7 @@ use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{Field, PrimeCharacteristicRing};
-use p3_fri::{TwoAdicFriPcs, create_test_fri_config};
+use p3_fri::{TwoAdicFriPcs, create_test_fri_params};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_merkle_tree::MerkleTreeMmcs;
@@ -29,9 +29,12 @@ impl<AB: InteractionBuilder> Air<AB> for SendingAir {
         let main = builder.main();
         let local = main.row_slice(0).unwrap();
         if !AB::ONLY_INTERACTION {
-            builder.assert_eq(local[0].into().square(), local[0].into().square());
+            builder.assert_eq(
+                local[0].clone().into().square(),
+                local[0].clone().into().square(),
+            );
         }
-        builder.push_send(0, [local[0]], AB::Expr::ONE);
+        builder.push_send(0, [local[0].clone()], AB::Expr::ONE);
     }
 }
 
@@ -48,9 +51,12 @@ impl<AB: InteractionBuilder> Air<AB> for ReceivingAir {
         let main = builder.main();
         let local = main.row_slice(0).unwrap();
         if !AB::ONLY_INTERACTION {
-            builder.assert_eq(local[0].into().square(), local[0].into().square());
+            builder.assert_eq(
+                local[0].clone().into().square(),
+                local[0].clone().into().square(),
+            );
         }
-        builder.push_receive(0, [local[0]], local[1]);
+        builder.push_receive(0, [local[0].clone()], local[1].clone());
     }
 }
 
@@ -125,7 +131,7 @@ fn do_test(sending_trace: RowMajorMatrix<Val>, receiving_trace: RowMajorMatrix<V
     let val_mmcs = ValMmcs::new(hash, compress);
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
     let dft = Dft::default();
-    let fri_config = create_test_fri_config(challenge_mmcs, 0);
+    let fri_config = create_test_fri_params(challenge_mmcs, 0);
     let pcs = Pcs::new(dft, val_mmcs, fri_config);
     let challenger = Challenger::new(perm);
     let config = MyConfig::new(pcs, challenger);

@@ -8,8 +8,10 @@ use p3_hyperplonk::{HyperPlonkConfig, ProverInput, VerifierInput, keygen, prove,
 use p3_keccak::Keccak256Hash;
 use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear};
 use p3_poseidon2_air::{RoundConstants, generate_trace_rows, num_cols};
-use p3_symmetric::{CompressionFunctionFromHasher, SerializingHasher};
-use p3_whir::{FoldingFactor, ProtocolParameters, SecurityAssumption, WhirPcs};
+use p3_whir::{
+    FoldingFactor, InitialPhaseConfig, KeccakNodeCompress, KeccakU32BeLeafHasher,
+    ProtocolParameters, SecurityAssumption, WhirPcs,
+};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use tracing_forest::ForestLayer;
@@ -23,11 +25,10 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 type Val = KoalaBear;
 type Challenge = BinomialExtensionField<Val, 4>;
 type LinearLayers = GenericPoseidon2LinearLayersKoalaBear;
-type ByteHash = Keccak256Hash;
-type FieldHash = SerializingHasher<ByteHash>;
-type Compress = CompressionFunctionFromHasher<ByteHash, 2, 32>;
+type FieldHash = KeccakU32BeLeafHasher;
+type Compress = KeccakNodeCompress;
 type Dft<Val> = Radix2DitParallel<Val>;
-type Pcs<Val, Dft> = WhirPcs<Val, Dft, FieldHash, Compress, 32>;
+type Pcs<Val, Dft> = WhirPcs<Val, Dft, FieldHash, Compress, 4>;
 type Challenger = SerializingChallenger32<Val, HashChallenger<u8, Keccak256Hash, 32>>;
 
 const WIDTH: usize = 16;
@@ -48,34 +49,32 @@ pub struct Poseidon2Air(
     >,
 );
 
-impl<F> BaseAir<F> for &Poseidon2Air {
+impl BaseAir<Val> for Poseidon2Air {
     fn width(&self) -> usize {
         num_cols::<WIDTH, SBOX_DEGREE, SBOX_REGISTERS, HALF_FULL_ROUNDS, PARTIAL_ROUNDS>()
     }
 }
 
-impl<F> BaseAirWithPublicValues<F> for &Poseidon2Air {}
+impl BaseAirWithPublicValues<Val> for Poseidon2Air {}
 
-impl<AB: AirBuilder<F = Val>> Air<AB> for &Poseidon2Air {
-    #[inline]
+impl<AB: AirBuilder<F = Val>> Air<AB> for Poseidon2Air {
     fn eval(&self, builder: &mut AB) {
         self.0.eval(builder);
     }
 }
 
 fn main() {
-    let mut rng = StdRng::from_os_rng();
+    let mut rng = StdRng::seed_from_u64(0);
 
     let config = {
         let dft = Dft::default();
         // FIXME: Set to 128 when higher degree extension field is available.
         let security_level = 100;
         let pow_bits = 20;
-        let byte_hash = ByteHash {};
-        let field_hash = FieldHash::new(byte_hash);
-        let compress = Compress::new(byte_hash);
+        let field_hash = FieldHash::default();
+        let compress = Compress::default();
         let whir_params = ProtocolParameters {
-            initial_statement: true,
+            initial_phase_config: InitialPhaseConfig::WithStatementClassic,
             security_level,
             pow_bits,
             folding_factor: FoldingFactor::Constant(4),
@@ -87,12 +86,13 @@ fn main() {
         };
         HyperPlonkConfig::<_, Challenge, _>::new(
             Pcs::new(dft, whir_params),
-            Challenger::from_hasher(Vec::new(), Keccak256Hash {}),
+            Challenger::from_hasher(Vec::new(), Keccak256Hash),
         )
     };
 
     let round_constants = RoundConstants::from_rng(&mut rng);
-    let air = &Poseidon2Air(p3_poseidon2_air::Poseidon2Air::new(round_constants.clone()));
+    let make_air = || Poseidon2Air(p3_poseidon2_air::Poseidon2Air::new(round_constants.clone()));
+    let air = make_air();
     let (vk, pk) = keygen([&air]);
 
     let log_b = 15;
@@ -112,7 +112,7 @@ fn main() {
 
     let start = Instant::now();
     while Instant::now().duration_since(start).as_secs() < 3 {
-        let prover_inputs = vec![ProverInput::new(air, Vec::new(), trace.clone())];
+        let prover_inputs = vec![ProverInput::new(make_air(), Vec::new(), trace.clone())];
         prove(&config, &pk, prover_inputs);
     }
 
@@ -124,9 +124,9 @@ fn main() {
         .with(ForestLayer::default())
         .init();
 
-    let prover_inputs = vec![ProverInput::new(air, Vec::new(), trace)];
+    let prover_inputs = vec![ProverInput::new(make_air(), Vec::new(), trace)];
     let proof = prove(&config, &pk, prover_inputs);
 
-    let verifier_inputs = vec![VerifierInput::new(air, Vec::new())];
+    let verifier_inputs = vec![VerifierInput::new(make_air(), Vec::new())];
     verify(&config, &vk, verifier_inputs, &proof).unwrap();
 }

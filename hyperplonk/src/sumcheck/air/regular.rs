@@ -281,7 +281,7 @@ where
         VarEF: Copy + Algebra<Var> + From<Challenge>,
     >(
         &self,
-    ) -> EvalsAccumulator<Val, Challenge, Var, VarEF, A> {
+    ) -> EvalsAccumulator<'_, Val, Challenge, Var, VarEF, A> {
         EvalsAccumulator::new(
             self.meta,
             self.air,

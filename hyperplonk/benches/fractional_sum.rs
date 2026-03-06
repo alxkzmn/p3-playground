@@ -40,9 +40,10 @@ impl<AB: InteractionBuilder> Air<AB> for InteractionAir {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
         let local = main.row_slice(0).unwrap();
+        let local0 = local[0].clone();
         for _ in 0..INTERACTION_COUNT / 2 {
-            builder.push_send(0, [local[0]], AB::Expr::ONE);
-            builder.push_receive(0, [local[0]], AB::Expr::ONE);
+            builder.push_send(0, [local0.clone()], AB::Expr::ONE);
+            builder.push_receive(0, [local0.clone()], AB::Expr::ONE);
         }
     }
 }

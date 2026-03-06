@@ -11,7 +11,7 @@ use p3_commit::testing::TrivialPcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{Field, PrimeCharacteristicRing};
-use p3_fri::{FriConfig, TwoAdicFriPcs};
+use p3_fri::{FriParameters, TwoAdicFriPcs};
 use p3_keccak::Keccak256Hash;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
@@ -104,18 +104,20 @@ impl<AB: AirBuilder> Air<AB> for MulAir {
 
         for i in 0..REPETITIONS {
             let start = i * 3;
-            let a = main_local[start];
-            let b = main_local[start + 1];
-            let c = main_local[start + 2];
-            builder.assert_zero(a.into().exp_u64(self.degree - 1) * b - c);
+            let a: AB::Expr = main_local[start].clone().into();
+            let b: AB::Expr = main_local[start + 1].clone().into();
+            let c: AB::Expr = main_local[start + 2].clone().into();
+            builder.assert_zero(a.clone().exp_u64(self.degree - 1) * b.clone() - c);
             if self.uses_boundary_constraints {
-                builder.when_first_row().assert_eq(a * a + AB::Expr::ONE, b);
+                builder
+                    .when_first_row()
+                    .assert_eq(a.clone() * a.clone() + AB::Expr::ONE, b);
             }
             if self.uses_transition_constraints {
-                let next_a = main_next[start];
+                let next_a: AB::Expr = main_next[start].clone().into();
                 builder
                     .when_transition()
-                    .assert_eq(a + AB::Expr::from_u8(REPETITIONS as u8), next_a);
+                    .assert_eq(a.clone() + AB::Expr::from_u8(REPETITIONS as u8), next_a);
             }
         }
     }
@@ -220,11 +222,12 @@ fn do_test_bb_twoadic(log_blowup: usize, degree: u64, log_n: usize) -> Result<()
 
     type Challenger = DuplexChallenger<Val, Perm, 16, 8>;
 
-    let fri_config = FriConfig {
+    let fri_config = FriParameters {
         log_blowup,
         log_final_poly_len: 5,
         num_queries: 40,
-        proof_of_work_bits: 8,
+        commit_proof_of_work_bits: 8,
+        query_proof_of_work_bits: 8,
         mmcs: challenge_mmcs,
     };
     type Pcs = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>;
@@ -281,18 +284,19 @@ fn do_test_m31_circle(log_blowup: usize, degree: u64, log_n: usize) -> Result<()
 
     type Challenger = SerializingChallenger32<Val, HashChallenger<u8, ByteHash, 32>>;
 
-    let fri_config = FriConfig {
+    let fri_config = FriParameters {
         log_blowup,
         log_final_poly_len: 0,
         num_queries: 40,
-        proof_of_work_bits: 8,
+        commit_proof_of_work_bits: 8,
+        query_proof_of_work_bits: 8,
         mmcs: challenge_mmcs,
     };
 
     type Pcs = CirclePcs<Val, ValMmcs, ChallengeMmcs>;
     let pcs = Pcs {
         mmcs: val_mmcs,
-        fri_config,
+        fri_params: fri_config,
         _phantom: PhantomData,
     };
 

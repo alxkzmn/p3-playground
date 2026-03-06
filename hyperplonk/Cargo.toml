@@ -33,6 +33,7 @@ p3-whir = { workspace = true, features = ["parallel"] }
 rand.workspace = true
 tracing-forest = { workspace = true, features = ["ansi", "smallvec"] }
 tracing-subscriber = { workspace = true, features = ["std", "env-filter"] }
+whir-p3.workspace = true
 
 [features]
 check-constraints = ["p3-air-ext/check-constraints"]
@@ -46,8 +47,20 @@ name = "air"
 harness = false
 required-features = ["bench"]
 
+[[example]]
+name = "koala_bear_poseidon2"
+
+[[example]]
+name = "evm_vectors"
+
 [[bench]]
 name = "fractional_sum"
+
+harness = false
+required-features = ["bench"]
+
+[[bench]]
+name = "poseidon2_koala_bear"
 
 harness = false
 required-features = ["bench"]

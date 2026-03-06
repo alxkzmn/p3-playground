@@ -52,7 +52,9 @@ impl<AB: AirBuilderWithPublicValues> Air<AB> for MyAir {
             Self::GrandProduct { .. } => cloned(&*local).map_into().product::<AB::Expr>(),
         };
 
-        builder.when_transition().assert_eq(output.clone(), next[0]);
+        builder
+            .when_transition()
+            .assert_eq(output.clone(), next[0].clone());
         builder
             .when_last_row()
             .assert_eq(output.clone(), grand_output);
@@ -96,7 +98,7 @@ fn single_sum() {
         let air = MyAir::GrandSum { width };
         let (trace, output) = air.generate_trace_rows(log_b, &mut rng);
         let public_values = vec![output];
-        run::<Val, Challenge, _>(vec![ProverInput::new(air, public_values, trace)]);
+        run::<Challenge, _>(vec![ProverInput::new(air, public_values, trace)]);
     }
 }
 
@@ -107,7 +109,7 @@ fn single_product() {
         let air = MyAir::GrandProduct { width };
         let (trace, output) = air.generate_trace_rows(log_b, &mut rng);
         let public_values = vec![output];
-        run::<Val, Challenge, _>(vec![ProverInput::new(air, public_values, trace)]);
+        run::<Challenge, _>(vec![ProverInput::new(air, public_values, trace)]);
     }
 }
 
@@ -116,7 +118,7 @@ fn multiple_mixed() {
     let mut rng = StdRng::from_os_rng();
     for _ in 0..100 {
         let n = rng.random_range(1..10);
-        run::<Val, Challenge, _>(
+        run::<Challenge, _>(
             (0..n)
                 .map(|_| {
                     let log_b = rng.random_range(4..12);
