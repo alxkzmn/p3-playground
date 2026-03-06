@@ -1,46 +1,56 @@
-# HyperPlonk EVM Proof Serialization v2
+# HyperPlonk EVM Proof Serialization (v1/v2/v3)
 
-This document defines the canonical wire format emitted by `evm_vectors` for on-chain verification.
+This document defines HyperPlonk EVM proof blob formats used by `evm_vectors`.
+
+## Version semantics
+
+- `v1`: explicit legacy format.
+- `v2`: compact format with full `bytes32` Merkle digests.
+- `v3`: compact format with masked/truncated Merkle digests.
+
+`evm_vectors` now emits `v3` by default.
 
 ## Goals
 
-- Include all verifier-required proof material (HyperPlonk + WHIR + public inputs).
-- Keep v2 minimal and deterministic (no debug-only redundancy).
-- Preserve forward compatibility for future size optimizations.
-
-## Outputs
-
-The example supports two output modes:
-
-1. `json` (default): canonical metadata + proof blob + wallet-ready calldata.
-2. `calldata`: wallet-ready transaction data for `verify(bytes)`.
+- Minimize calldata bytes for `verify(bytes)`.
+- Keep deterministic encoding and strict decoding.
+- Preserve explicit legacy decode paths for test fixtures.
 
 ## Fixed verifier entrypoint
 
-- Function signature: `verify(bytes)`
-- Calldata format: `selector || abi.encode(bytes proof_blob_v2)`
-- `selector` is the first 4 bytes of `keccak256("verify(bytes)")`.
+- Function signature: `verify(bytes)`.
+- Calldata format: `selector || abi.encode(bytes proof_blob)`.
+- `selector = keccak256("verify(bytes)")[0..4]`.
 
-## JSON schema (`p3-hyperplonk-evm-proof-v2`)
+## JSON payload
 
-```json
-{
-  "schema": "p3-hyperplonk-evm-proof-v2",
-  "verify_function": "verify(bytes)",
-  "selector": "0x....",
-  "proof_bytes": "0x....",
-  "proof_bytes_len": 0,
-  "calldata": "0x....",
-  "calldata_len": 0
-}
-```
+Schema values:
 
-## Binary proof blob (`proof_blob_v2`)
+- `v1`: `p3-hyperplonk-evm-proof-v1`
+- `v2`: `p3-hyperplonk-evm-proof-v2`
+- `v3`: `p3-hyperplonk-evm-proof-v3`
+
+Rendered JSON includes:
+
+- `proof_blob_version`
+- `keccak_mode`
+- `masked_digest_bytes`
+- `masked_digest_bits`
+- `merkle_security_bits`
+- `merkle_security_bits_override`
+- `merkle_override_weaker_than_security`
+- `total_merkle_digest_count`
+- `proof_bytes` and `proof_bytes_len`
+- `calldata` and `calldata_len`
+- `calldata_gas_estimate`
+- `hash_counts_prover`, `hash_counts_verifier`, `hash_counts_total`
+
+## Binary proof blob
 
 ### Envelope
 
 - `magic[4] = "HPK1"`
-- `version:u8 = 2`
+- `version:u8` (`1|2|3`)
 
 ### Public input section
 
@@ -51,7 +61,7 @@ The example supports two output modes:
 
 ### HyperPlonk proof section
 
-Encodes all verifier-required fields in this order:
+In order:
 
 1. `log_bs`
 2. `commitment`
@@ -61,54 +71,98 @@ Encodes all verifier-required fields in this order:
 
 ### WHIR proof section (per PCS proof)
 
-For each WHIR proof, encode:
+In order:
 
 1. `initial_commitment`
 2. `initial_ood_answers`
 3. `initial_sumcheck`
-4. `rounds`:
-   - `commitment`
-   - `ood_answers`
-   - `pow_witness`
-   - `query_batch`
-   - `sumcheck`
-5. `final_poly` (option tagged)
+4. `rounds[]`:
+
+- `commitment`
+- `ood_answers`
+- `pow_witness`
+- `query_batch`
+- `sumcheck`
+
+5. `final_poly` (option-tagged)
 6. `final_pow_witness`
 7. `final_query_batch`
-8. `final_sumcheck` (option tagged)
+8. `final_sumcheck` (option-tagged)
+
+## Query-batch encoding
+
+### v1 (legacy)
+
+- `query_kind:u8` (`0=base`, `1=extension`)
+- `query_count:varuint`
+- `row_width:varuint`
+- `values_flat`
+- `decommit_count:varuint`
+- `decommitments[decommit_count]`
+
+### v2 and v3 (compact)
+
+Only payload arrays are encoded:
+
+- `values_flat`
+- `decommitments`
+
+Not encoded in compact modes:
+
+- `query_kind`
+- `query_count`
+- `row_width`
+- `decommit_count`
+
+Decoder derives query shape from transcript/protocol round context.
+
+## Digest encoding by version
+
+- `v1`, `v2`: Merkle digests serialized as full 32 bytes.
+- `v3`: Merkle digests serialized as `effective_digest_bytes` and zero-padded back to 32 bytes during decode.
+
+`effective_digest_bytes` is security-coupled (`ceil(2 * security_bits / 8)`, clamped to `[1,32]`).
+
+## Manual Merkle override
+
+`evm_vectors` supports `--merkle-security-bits <usize>`.
+
+Resolved Merkle masking security is:
+
+- `merkle_security_bits = merkle_security_bits_override.unwrap_or(security_bits)`
+
+Digest width is then:
+
+- `effective_digest_bytes = ceil(2 * merkle_security_bits / 8)` (clamped to `[1,32]`)
+
+This override is a research knob and may reduce Merkle binding security below global protocol security. No wire-format change is introduced by this override.
 
 ## Primitive encodings
 
-- `varuint`: canonical unsigned LEB128 (ULEB128, minimal form only).
-- `base_field` (`KoalaBear`): 4-byte big-endian canonical limb (`as_canonical_u32().to_be_bytes()`).
-- `extension_field` (`BinomialExtensionField<_,4>`): 4 base limbs in order, each 4-byte big-endian.
-- `digest`: bytes32 canonical map of `[u64;4]`:
-  - `bytes32 = u64_be[0] || u64_be[1] || u64_be[2] || u64_be[3]`
-- `option`: 1-byte tag (`0 = None`, `1 = Some`), followed by payload for `Some`.
-- `query kind`: 1-byte tag (`0 = base`, `1 = extension`).
+- `varuint`: canonical unsigned LEB128 (minimal only).
+- `base_field` (`KoalaBear`): 4-byte big-endian limb.
+- `extension_field` (`BinomialExtensionField<_,4>`): 4 base limbs.
+- `option`: `0=None`, `1=Some` + payload.
 
-### Query batch encoding (per round and final round)
+## Strict decode rules
 
-- `query_kind:u8` (`0 = base`, `1 = extension`)
-- `query_count:varuint`
-- `row_width:varuint`
-- `values_flat`:
-  - base: `query_count * row_width` base-field elements
-  - extension: `query_count * row_width` extension-field elements
-- `decommit_count:varuint`
-- `decommitments[decommit_count]:digest`
+Decoders reject:
 
-## Determinism and strict decoding
+- unsupported `version`
+- missing required context for compact decode
+- non-canonical varuint
+- malformed enum/option tags
+- malformed ABI wrapper for `verify(bytes)`
+- malformed `final_poly` lengths (must be power-of-two if present)
+- compact payload lengths that do not match derived shape
+- malformed/truncated digest payloads
+- trailing bytes
 
-Decoders MUST reject:
+## Solidity follow-up for v3
 
-- trailing bytes after parsing the top-level proof blob,
-- non-canonical varuint representations,
-- unknown enum/option tags,
-- malformed ABI calldata (`verify(bytes)` selector mismatch, bad offset/length/padding),
-- malformed `final_poly` lengths (must be power-of-two when present).
+`v3` requires on-chain parser/verifier support for truncated digest bytes, with zero-padding to `bytes32` before hash checks. This cycle does not modify `/Users/alexkuzmin/development/zkid-benchmarks/sol-whir`.
 
-## Compatibility guidance
+## Deferred TODO
 
-- v2 is intentionally minimal for correctness and benchmarking.
-- Future compression/packing changes should use a new version while preserving `verify(bytes)` call shape.
+- Avoid per-query `open_batch` extraction during multiproof assembly (move toward multi-open/layer access).
+- Target effect: reduce prover CPU/RAM overhead without proof semantic changes.

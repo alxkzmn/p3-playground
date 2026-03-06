@@ -20,7 +20,7 @@ p3-maybe-rayon.workspace = true
 p3-ml-pcs.workspace = true
 p3-symmetric.workspace = true
 p3-util.workspace = true
-p3-whir = { workspace = true, features = ["parallel"] }
+p3-whir = { workspace = true, features = ["parallel", "hash_count"] }
 serde = { workspace = true, features = ["derive", "alloc"] }
 tracing.workspace = true
 whir-p3.workspace = true
@@ -34,7 +34,7 @@ p3-keccak.workspace = true
 p3-koala-bear.workspace = true
 p3-poseidon2-air.workspace = true
 p3-symmetric.workspace = true
-p3-whir = { workspace = true, features = ["parallel"] }
+p3-whir = { workspace = true, features = ["parallel", "hash_count"] }
 rand.workspace = true
 tracing-forest = { workspace = true, features = ["ansi", "smallvec"] }
 tracing-subscriber = { workspace = true, features = ["std", "env-filter"] }
@@ -43,6 +43,8 @@ whir-p3.workspace = true
 [features]
 check-constraints = ["p3-air-ext/check-constraints"]
 parallel = ["p3-maybe-rayon/parallel"]
+hash_count = ["p3-whir/hash_count", "whir-p3/hash_count"]
+keccak_no_prefix = ["p3-whir/keccak_no_prefix"]
 
 bench = ["parallel"]
 

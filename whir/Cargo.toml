@@ -28,3 +28,5 @@ p3-keccak.workspace = true
 
 [features]
 parallel = ["p3-maybe-rayon/parallel", "whir-p3/parallel"]
+hash_count = ["whir-p3/hash_count"]
+keccak_no_prefix = []
