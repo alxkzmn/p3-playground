@@ -9,11 +9,11 @@ use p3_keccak::Keccak256Hash;
 use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear};
 use p3_poseidon2_air::{RoundConstants, generate_trace_rows, num_cols};
 use p3_whir::{
-    FoldingFactor, InitialPhaseConfig, KeccakNodeCompress, KeccakU32BeLeafHasher,
-    ProtocolParameters, SecurityAssumption, WhirPcs,
+    FoldingFactor, KeccakNodeCompress, KeccakU32BeLeafHasher, ProtocolParameters,
+    SecurityAssumption, WhirPcs,
 };
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use tracing_forest::ForestLayer;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, Registry};
@@ -74,7 +74,6 @@ fn main() {
         let field_hash = FieldHash::default();
         let compress = Compress::default();
         let whir_params = ProtocolParameters {
-            initial_phase_config: InitialPhaseConfig::WithStatementClassic,
             security_level,
             pow_bits,
             folding_factor: FoldingFactor::Constant(4),

@@ -9,11 +9,10 @@ use p3_koala_bear::KoalaBear;
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_ml_pcs::{MlPcs, MlQuery};
-use rand::distr::{Distribution, StandardUniform};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
-fn seeded_rng() -> impl Rng {
+fn seeded_rng() -> StdRng {
     StdRng::seed_from_u64(0)
 }
 
@@ -23,7 +22,6 @@ fn do_test_whir_pcs<Val, Challenge, Challenger, P>(
 ) where
     P: MlPcs<Challenge, Challenger, Val = Val>,
     Val: Field,
-    StandardUniform: Distribution<Val>,
     Challenge: ExtensionField<Val>,
     Challenger: Clone
         + CanObserve<P::Commitment>
@@ -44,7 +42,10 @@ fn do_test_whir_pcs<Val, Challenge, Challenger, P>(
                     let height = 1 << log_b;
                     // random width 5-15
                     let width = 5 + rng.random_range(0..=10);
-                    (log_b, RowMajorMatrix::<Val>::rand(&mut rng, height, width))
+                    let values = repeat_with(|| Val::from_bool(rng.random::<bool>()))
+                        .take(height * width)
+                        .collect_vec();
+                    (log_b, RowMajorMatrix::<Val>::new(values, width))
                 })
                 .collect_vec()
         })
@@ -214,7 +215,6 @@ mod koala_bear_whir_pcs {
         FoldingFactor, KeccakNodeCompress, KeccakU32BeLeafHasher, ProtocolParameters,
         SecurityAssumption, WhirPcs,
     };
-    use whir_p3::whir::parameters::InitialPhaseConfig;
 
     use super::*;
 
@@ -239,7 +239,6 @@ mod koala_bear_whir_pcs {
         let field_hash = FieldHash::default();
         let compress = Compress::default();
         let whir_params = ProtocolParameters {
-            initial_phase_config: InitialPhaseConfig::WithStatementClassic,
             security_level,
             pow_bits,
             rs_domain_initial_reduction_factor: 3,

@@ -101,9 +101,9 @@ where
             let width = air.width();
             let public_value_count = air.num_public_values();
             let (_, _, zero_check_uv_degree, eval_check_uv_degree) =
-                get_symbolic_info(air, 0, 0, public_value_count);
+                get_symbolic_info(air, 0, public_value_count);
             let (constraints, interactions, zero_check_mv_degree, eval_check_mv_degree) =
-                get_symbolic_info(air, 1, 0, public_value_count);
+                get_symbolic_info(air, 1, public_value_count);
             let constraint_count = constraints.len();
             let interaction_count = interactions.len();
             let max_bus_index =
@@ -151,7 +151,6 @@ where
 fn get_symbolic_info<F, A>(
     air: &A,
     is_transition_degree: usize,
-    preprocessed_width: usize,
     num_public_values: usize,
 ) -> (
     Vec<SymbolicExpression<F>>,
@@ -163,12 +162,7 @@ where
     F: Field,
     A: Air<SymbolicAirBuilder<F>>,
 {
-    let mut builder = SymbolicAirBuilder::new(
-        is_transition_degree,
-        preprocessed_width,
-        air.width(),
-        num_public_values,
-    );
+    let mut builder = SymbolicAirBuilder::new(is_transition_degree, air.width(), num_public_values);
     air.eval(&mut builder);
     let (constraints, interactions) = builder.into_symbolic_constraints();
     let zero_check_degree = max_degree(&constraints);

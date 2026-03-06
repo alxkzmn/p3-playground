@@ -119,7 +119,8 @@ type MyConfig = StarkConfig<Pcs, Challenge, Challenger>;
 
 /// n-th Fibonacci number expected to be x
 fn test_public_value_impl(n: usize, x: u64, log_final_poly_len: usize) {
-    let perm = Perm::new_from_rng_128(&mut rng());
+    let mut random = rng();
+    let perm = Perm::new_from_rng_128(&mut random);
     let hash = MyHash::new(perm.clone());
     let compress = MyCompress::new(perm.clone());
     let val_mmcs = ValMmcs::new(hash, compress);
@@ -160,7 +161,8 @@ fn test_public_value() {
 #[cfg(feature = "check-constraints")]
 #[should_panic(expected = "assertion `left == right` failed: constraints had nonzero value")]
 fn test_incorrect_public_value() {
-    let perm = Perm::new_from_rng_128(&mut rng());
+    let mut random = rng();
+    let perm = Perm::new_from_rng_128(&mut random);
     let hash = MyHash::new(perm.clone());
     let compress = MyCompress::new(perm.clone());
     let val_mmcs = ValMmcs::new(hash, compress);

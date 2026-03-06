@@ -14,7 +14,7 @@ use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use p3_uni_stark_ext::{
     InteractionBuilder, ProverInput, StarkConfig, VerifierInput, keygen, prove, verify,
 };
-use rand::{Rng, rng};
+use rand::{RngExt, rng};
 
 struct SendingAir;
 
@@ -89,7 +89,7 @@ impl<AB: InteractionBuilder> Air<AB> for MyAir {
     }
 }
 
-fn generate_sending_trace<F: Field>(n: usize, mut rng: impl Rng) -> RowMajorMatrix<F> {
+fn generate_sending_trace<F: Field>(n: usize, mut rng: impl RngExt) -> RowMajorMatrix<F> {
     let mut trace = RowMajorMatrix::new_col(F::zero_vec(n));
     trace
         .values
@@ -125,7 +125,8 @@ type Pcs = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>;
 type MyConfig = StarkConfig<Pcs, Challenge, Challenger>;
 
 fn do_test(sending_trace: RowMajorMatrix<Val>, receiving_trace: RowMajorMatrix<Val>) {
-    let perm = Perm::new_from_rng_128(&mut rng());
+    let mut random = rng();
+    let perm = Perm::new_from_rng_128(&mut random);
     let hash = MyHash::new(perm.clone());
     let compress = MyCompress::new(perm.clone());
     let val_mmcs = ValMmcs::new(hash, compress);

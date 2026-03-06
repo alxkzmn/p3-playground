@@ -23,8 +23,7 @@ use p3_symmetric::{
 use p3_uni_stark_ext::{
     ProverInput, StarkConfig, StarkGenericConfig, Val, VerifierInput, keygen, prove, verify,
 };
-use rand::distr::{Distribution, StandardUniform};
-use rand::{Rng, rng};
+use rand::rng;
 
 /// How many `a * b = c` operations to do per row in the AIR.
 const REPETITIONS: usize = 20; // This should be < 255 so it can fit into a u8.
@@ -55,23 +54,19 @@ impl Default for MulAir {
 }
 
 impl MulAir {
-    pub fn random_valid_trace<F: Field>(&self, rows: usize, valid: bool) -> RowMajorMatrix<F>
-    where
-        StandardUniform: Distribution<F>,
-    {
-        let mut rng = rng();
+    pub fn random_valid_trace<F: Field>(&self, rows: usize, valid: bool) -> RowMajorMatrix<F> {
         let mut trace_values = F::zero_vec(rows * TRACE_WIDTH);
         for (i, (a, b, c)) in trace_values.iter_mut().tuples().enumerate() {
             let row = i / REPETITIONS;
             *a = if self.uses_transition_constraints {
                 F::from_usize(i)
             } else {
-                rng.random()
+                F::from_usize(i * 7 + 3)
             };
             *b = if self.uses_boundary_constraints && row == 0 {
                 a.square() + F::ONE
             } else {
-                rng.random()
+                F::from_usize(i * 11 + 5)
             };
             *c = a.exp_u64(self.degree - 1) * *b;
 
@@ -130,7 +125,6 @@ fn do_test<SC: StarkGenericConfig>(
 ) -> Result<(), impl Debug>
 where
     SC::Challenger: Clone,
-    StandardUniform: Distribution<Val<SC>>,
 {
     let (vk, pk) = keygen::<Val<SC>, _>(air.degree.max(3) as _, &[air]);
 
@@ -157,7 +151,8 @@ fn do_test_bb_trivial(degree: u64, log_n: usize) -> Result<(), impl Debug> {
     type Challenge = BinomialExtensionField<Val, 4>;
 
     type Perm = Poseidon2BabyBear<16>;
-    let perm = Perm::new_from_rng_128(&mut rng());
+    let mut random = rng();
+    let perm = Perm::new_from_rng_128(&mut random);
 
     type Dft = Radix2DitParallel<Val>;
     let dft = Dft::default();
@@ -202,7 +197,8 @@ fn do_test_bb_twoadic(log_blowup: usize, degree: u64, log_n: usize) -> Result<()
     type Challenge = BinomialExtensionField<Val, 4>;
 
     type Perm = Poseidon2BabyBear<16>;
-    let perm = Perm::new_from_rng_128(&mut rng());
+    let mut random = rng();
+    let perm = Perm::new_from_rng_128(&mut random);
 
     type MyHash = PaddingFreeSponge<Perm, 16, 8, 8>;
     let hash = MyHash::new(perm.clone());
@@ -225,6 +221,7 @@ fn do_test_bb_twoadic(log_blowup: usize, degree: u64, log_n: usize) -> Result<()
     let fri_config = FriParameters {
         log_blowup,
         log_final_poly_len: 5,
+        max_log_arity: 1,
         num_queries: 40,
         commit_proof_of_work_bits: 8,
         query_proof_of_work_bits: 8,
@@ -287,6 +284,7 @@ fn do_test_m31_circle(log_blowup: usize, degree: u64, log_n: usize) -> Result<()
     let fri_config = FriParameters {
         log_blowup,
         log_final_poly_len: 0,
+        max_log_arity: 1,
         num_queries: 40,
         commit_proof_of_work_bits: 8,
         query_proof_of_work_bits: 8,

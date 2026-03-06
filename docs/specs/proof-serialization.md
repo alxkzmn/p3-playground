@@ -1,55 +1,114 @@
-# WHIR Keccak proof serialization (bytes32 canonical form)
+# HyperPlonk EVM Proof Serialization v2
 
-This document defines the canonical, on-chain friendly encoding for Keccak-based WHIR proofs.
-It targets minimal gas usage and deterministic transcript reconstruction.
+This document defines the canonical wire format emitted by `evm_vectors` for on-chain verification.
 
-## Digest representation
+## Goals
 
-- **Internal (off-chain) digest type:** `[u64; 4]` (SIMD-friendly).
-- **Wire / on-chain digest type:** `bytes32`.
-- **Canonical mapping:** big-endian u64 chunks.
+- Include all verifier-required proof material (HyperPlonk + WHIR + public inputs).
+- Keep v2 minimal and deterministic (no debug-only redundancy).
+- Preserve forward compatibility for future size optimizations.
 
+## Outputs
+
+The example supports two output modes:
+
+1. `json` (default): canonical metadata + proof blob + wallet-ready calldata.
+2. `calldata`: wallet-ready transaction data for `verify(bytes)`.
+
+## Fixed verifier entrypoint
+
+- Function signature: `verify(bytes)`
+- Calldata format: `selector || abi.encode(bytes proof_blob_v2)`
+- `selector` is the first 4 bytes of `keccak256("verify(bytes)")`.
+
+## JSON schema (`p3-hyperplonk-evm-proof-v2`)
+
+```json
+{
+  "schema": "p3-hyperplonk-evm-proof-v2",
+  "verify_function": "verify(bytes)",
+  "selector": "0x....",
+  "proof_bytes": "0x....",
+  "proof_bytes_len": 0,
+  "calldata": "0x....",
+  "calldata_len": 0
+}
 ```
-bytes32 = u64_be[0] || u64_be[1] || u64_be[2] || u64_be[3]
-```
 
-## Merkle hashing
+## Binary proof blob (`proof_blob_v2`)
 
-All Merkle hashing uses Keccak256 with explicit domain separation prefixes.
+### Envelope
 
-- **Leaf hash**: `Keccak256(0x00 || leaf_payload)`
-- **Node hash**: `Keccak256(0x01 || left || right)`
+- `magic[4] = "HPK1"`
+- `version:u8 = 2`
 
-Where:
+### Public input section
 
-- `left`/`right` are 32-byte digests in the canonical bytes32 form above.
-- `leaf_payload` is the byte encoding of the opened values for the query (see below).
+- `air_count:varuint`
+- For each AIR:
+  - `public_values_len:varuint`
+  - `public_value[i]:base_field`
 
-### Leaf payload encoding
+### HyperPlonk proof section
 
-For each base field element $f$:
+Encodes all verifier-required fields in this order:
 
-- encode as big-endian 32-bit limb: `f.as_canonical_u32().to_be_bytes()`.
+1. `log_bs`
+2. `commitment`
+3. `piop.fractional_sum`
+4. `piop.air`
+5. `pcs` (vector of WHIR proofs)
 
-For each extension field element $e$ with $k$ base limbs:
+### WHIR proof section (per PCS proof)
 
-- serialize the limbs in order, each as big-endian 32-bit, then concatenate.
+For each WHIR proof, encode:
 
-## Fiat–Shamir transcript observation order
+1. `initial_commitment`
+2. `initial_ood_answers`
+3. `initial_sumcheck`
+4. `rounds`:
+   - `commitment`
+   - `ood_answers`
+   - `pow_witness`
+   - `query_batch`
+   - `sumcheck`
+5. `final_poly` (option tagged)
+6. `final_pow_witness`
+7. `final_query_batch`
+8. `final_sumcheck` (option tagged)
 
-All prover and verifier implementations must observe values in the exact same order.
-The ordering is:
+## Primitive encodings
 
-1. Domain separator bytes (the full WHIR transcript pattern).
-2. Initial commitment root (bytes32).
-3. Initial OOD answers (field elements, canonical field encoding).
-4. Per-round commitments and openings as specified by the protocol.
+- `varuint`: canonical unsigned LEB128 (ULEB128, minimal form only).
+- `base_field` (`KoalaBear`): 4-byte big-endian canonical limb (`as_canonical_u32().to_be_bytes()`).
+- `extension_field` (`BinomialExtensionField<_,4>`): 4 base limbs in order, each 4-byte big-endian.
+- `digest`: bytes32 canonical map of `[u64;4]`:
+  - `bytes32 = u64_be[0] || u64_be[1] || u64_be[2] || u64_be[3]`
+- `option`: 1-byte tag (`0 = None`, `1 = Some`), followed by payload for `Some`.
+- `query kind`: 1-byte tag (`0 = base`, `1 = extension`).
 
-The concrete transcript layout is determined by WHIR’s domain separator pattern and must be
-applied identically off-chain and on-chain.
+### Query batch encoding (per round and final round)
 
-## Compatibility notes
+- `query_kind:u8` (`0 = base`, `1 = extension`)
+- `query_count:varuint`
+- `row_width:varuint`
+- `values_flat`:
+  - base: `query_count * row_width` base-field elements
+  - extension: `query_count * row_width` extension-field elements
+- `decommit_count:varuint`
+- `decommitments[decommit_count]:digest`
 
-- The on-chain verifier should only consume bytes32 digests.
-- Off-chain uses `[u64; 4]` and converts to/from bytes32 **only** at the I/O boundary.
-- Endianness is fixed to big-endian at all boundaries to avoid ambiguity.
+## Determinism and strict decoding
+
+Decoders MUST reject:
+
+- trailing bytes after parsing the top-level proof blob,
+- non-canonical varuint representations,
+- unknown enum/option tags,
+- malformed ABI calldata (`verify(bytes)` selector mismatch, bad offset/length/padding),
+- malformed `final_poly` lengths (must be power-of-two when present).
+
+## Compatibility guidance
+
+- v2 is intentionally minimal for correctness and benchmarking.
+- Future compression/packing changes should use a new version while preserving `verify(bytes)` call shape.

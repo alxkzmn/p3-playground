@@ -8,7 +8,7 @@ use p3_keccak::Keccak256Hash;
 use p3_koala_bear::{GenericPoseidon2LinearLayersKoalaBear, KoalaBear};
 use p3_poseidon2_air::{RoundConstants, generate_trace_rows, num_cols};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng, rng};
 
 #[cfg(target_family = "unix")]
 #[global_allocator]
@@ -56,7 +56,8 @@ fn bench(c: &mut Criterion) {
     let mut group = c.benchmark_group("prove_air/koala_bear_poseidon2");
     group.sample_size(10);
 
-    let mut rng = StdRng::from_os_rng();
+    let mut os_rng = rng();
+    let mut rng = StdRng::from_rng(&mut os_rng);
 
     let round_constants = RoundConstants::from_rng(&mut rng);
     let air = &Poseidon2Air(p3_poseidon2_air::Poseidon2Air::new(round_constants.clone()));

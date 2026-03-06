@@ -87,6 +87,18 @@ where
         Pcs::<Challenge, Challenger>::commit(&self.inner, evaluations)
     }
 
+    fn get_quotient_ldes(
+        &self,
+        evaluations: impl IntoIterator<Item = (Self::Domain, RowMajorMatrix<Val>)>,
+        num_chunks: usize,
+    ) -> Vec<RowMajorMatrix<Val>> {
+        Pcs::<Challenge, Challenger>::get_quotient_ldes(&self.inner, evaluations, num_chunks)
+    }
+
+    fn commit_ldes(&self, ldes: Vec<RowMajorMatrix<Val>>) -> (Self::Commitment, Self::ProverData) {
+        Pcs::<Challenge, Challenger>::commit_ldes(&self.inner, ldes)
+    }
+
     fn get_evaluations_on_domain<'a>(
         &self,
         prover_data: &'a Self::ProverData,
